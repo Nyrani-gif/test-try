@@ -1,0 +1,248 @@
+name: Aegisub Sanae Windows beta
+
+on:
+  push:
+    branches: [ '**' ]
+    tags: [ 'sanae-beta-*' ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sanae-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.x'
+
+      - name: Install build tools
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip setuptools meson
+          choco install ninja innosetup -y --no-progress
+
+          $moon = 'https://github.com/leafo/moonscript/releases/download/v0.6.0/moonscript-v0.6.0-windows-x86_64.zip'
+          New-Item -ItemType Directory -Path moonscript -Force | Out-Null
+          Invoke-WebRequest -Uri $moon -OutFile '.\moonscript\moonscript.zip'
+          Push-Location moonscript
+          7z e moonscript.zip -y
+          (Get-Location).Path | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          Pop-Location
+
+          $gettext = 'https://github.com/mlocati/gettext-iconv-windows/releases/download/v1.0-v1.18-r3/gettext1.0-iconv1.18-static-64.zip'
+          Invoke-WebRequest -Uri $gettext -OutFile '.\gettext.zip'
+          Expand-Archive '.\gettext.zip' -DestinationPath gettext -Force
+          (Resolve-Path gettext/bin).Path | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Locate Visual Studio
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vs) { throw 'Visual Studio with the x64 C++ toolchain was not found' }
+          "VS=$vs" >> $env:GITHUB_ENV
+
+      - name: Configure, compile and test
+        shell: pwsh
+        run: |
+          Import-Module "$env:VS\Common7\Tools\Microsoft.VisualStudio.DevShell.dll"
+          Enter-VsDevShell -VsInstallPath $env:VS -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
+
+          # Visual Studio's developer shell can leave the process outside the
+          # checkout. Resolve all Meson paths from GITHUB_WORKSPACE explicitly.
+          $repoRoot = $env:GITHUB_WORKSPACE
+          if (-not $repoRoot -or -not (Test-Path -LiteralPath $repoRoot -PathType Container)) {
+            throw "GitHub workspace was not found: $repoRoot"
+          }
+          Set-Location -LiteralPath $repoRoot
+          $buildDir = Join-Path $repoRoot 'build'
+
+          $cl = (Get-Command cl.exe -ErrorAction Stop).Source
+          $link = (Get-Command link.exe -ErrorAction Stop).Source
+          $gzip = 'C:\Program Files\Git\usr\bin\gzip.exe'
+          if ($link -like '*\Git\usr\bin\*') { throw "Wrong linker selected: $link" }
+          if (-not (Test-Path $gzip)) { throw "gzip was not found at $gzip" }
+
+          # Generate this runner-specific file instead of requiring an extra
+          # untracked/omitted file to be present in the repository checkout.
+          $nativeFile = Join-Path $env:RUNNER_TEMP 'sanae-windows-msvc.ini'
+          $mesonGzip = $gzip.Replace('\', '/')
+          @(
+            '[binaries]'
+            "gzip = '$mesonGzip'"
+          ) | Set-Content -LiteralPath $nativeFile -Encoding utf8
+          if (-not (Test-Path -LiteralPath $nativeFile -PathType Leaf)) {
+            throw "Failed to create Meson native file: $nativeFile"
+          }
+
+          Write-Host "MSVC compiler: $cl"
+          Write-Host "MSVC linker:   $link"
+          Write-Host "FFmpeg gzip:   $gzip"
+          Write-Host "Meson native: $nativeFile"
+
+          meson setup "$buildDir" "$repoRoot" --native-file "$nativeFile" `
+            -Dbuildtype=release -Ddefault_library=static `
+            --force-fallback-for=zlib,harfbuzz,freetype2,fribidi,libpng `
+            -Dfallback_nasm=true -Dfreetype2:harfbuzz=disabled `
+            -Dharfbuzz:freetype=disabled -Dharfbuzz:cairo=disabled `
+            -Dharfbuzz:glib=disabled -Dharfbuzz:gobject=disabled `
+            -Dharfbuzz:tests=disabled -Dharfbuzz:docs=disabled `
+            -Dfribidi:tests=false -Dfribidi:docs=false -Dlibass:fontconfig=disabled
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          # Keep Ninja running after independent compilation failures so one CI
+          # run exposes as many compiler errors as possible. Failed targets and
+          # anything depending on them will still be skipped, but unrelated
+          # translation units continue compiling.
+          $compileLog = Join-Path $buildDir 'compile.log'
+          $previousErrorAction = $ErrorActionPreference
+          $ErrorActionPreference = 'Continue'
+
+          & ninja -C "$buildDir" -k 0 2>&1 | Tee-Object -FilePath $compileLog
+          $compileExit = $LASTEXITCODE
+
+          $ErrorActionPreference = $previousErrorAction
+
+          if ($compileExit -ne 0) {
+            Write-Host ""
+            Write-Host "=================================================="
+            Write-Host " BUILD FAILED - COLLECTED COMPILER ERRORS"
+            Write-Host "=================================================="
+
+            # Extract the useful diagnostics from the full Ninja log and show
+            # them again together at the end of the step.
+            $errorPattern = '(?i)(FAILED:|(?:fatal\s+)?error(?:\s+[A-Z]+[0-9]+)?\s*:|ninja:\s*error:|meson\.build.*ERROR:)'
+            $errors = @(
+              Select-String -LiteralPath $compileLog -Pattern $errorPattern |
+                ForEach-Object { $_.Line.TrimEnd() } |
+                Select-Object -Unique
+            )
+
+            if ($errors.Count -eq 0) {
+              $errors = @('Build failed, but no compiler-style error lines were extracted. See compile.log artifact.')
+            }
+
+            $errors | ForEach-Object { Write-Host $_ }
+
+            # Also put a compact error list into the GitHub Actions job summary.
+            $summary = @()
+            $summary += '## Aegisub Sanae build errors'
+            $summary += ''
+            $summary += "Ninja continued after independent failures with `-k 0`. Exit code: $compileExit."
+            $summary += ''
+            $summary += '```text'
+            $summary += @($errors | Select-Object -First 250)
+            if ($errors.Count -gt 250) {
+              $summary += "... $($errors.Count - 250) more error lines; see the uploaded compile log."
+            }
+            $summary += '```'
+            $summary | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+
+            exit $compileExit
+          }
+
+          meson test -C "$buildDir" --print-errorlogs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload compile log on failure
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: Aegisub-Sanae-${{ github.run_number }}-compile-log
+          path: build/compile.log
+          if-no-files-found: ignore
+
+      - name: Build installer and portable package
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          Import-Module "$env:VS\Common7\Tools\Microsoft.VisualStudio.DevShell.dll"
+          Enter-VsDevShell -VsInstallPath $env:VS -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
+          $repoRoot = $env:GITHUB_WORKSPACE
+          if (-not $repoRoot -or -not (Test-Path -LiteralPath $repoRoot -PathType Container)) {
+            throw "GitHub workspace was not found: $repoRoot"
+          }
+          Set-Location -LiteralPath $repoRoot
+          $buildDir = Join-Path $repoRoot 'build'
+          meson compile -C "$buildDir" win-installer
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          meson compile -C "$buildDir" win-portable
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify and name packages
+        id: package
+        shell: pwsh
+        run: |
+          $russianMo = 'build/aegisub-portable/locale/ru/LC_MESSAGES/aegisub.mo'
+          if (-not (Test-Path $russianMo)) { throw "Russian catalogue is missing: $russianMo" }
+          $config = Get-Content 'build/aegisub-portable/config.json' -Raw | ConvertFrom-Json
+          if ($config.App.Language -ne 'ru') { throw 'Portable build is not Russian-first' }
+
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            if ($env:GITHUB_REF_NAME -notmatch '^sanae-beta-(\d+)$') { throw 'Unsupported release tag' }
+            $beta = [int]$Matches[1]
+            $slug = 'beta-{0:D2}' -f $beta
+            $releaseTitle = 'Sanae — Aegisub v0.{0} (beta)' -f $beta
+          } else {
+            $slug = "ci-$env:GITHUB_RUN_NUMBER"
+            $releaseTitle = ''
+          }
+
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          $portableName = "Aegisub-Sanae-$slug-Windows-portable.zip"
+          $installerName = "Aegisub-Sanae-$slug-Setup.exe"
+          Copy-Item 'build/aegisub-portable-64.zip' "dist/$portableName"
+          $installer = Get-ChildItem 'build/Aegisub-*.exe' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if (-not $installer) { throw 'Installer output was not found' }
+          Copy-Item $installer.FullName "dist/$installerName"
+
+          "slug=$slug" >> $env:GITHUB_OUTPUT
+          "portable=$portableName" >> $env:GITHUB_OUTPUT
+          "installer=$installerName" >> $env:GITHUB_OUTPUT
+          "release_title=$releaseTitle" >> $env:GITHUB_OUTPUT
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: Aegisub-Sanae-${{ steps.package.outputs.slug }}-Windows
+          path: dist/*
+          if-no-files-found: error
+
+      - name: Create tagged GitHub Release
+        if: github.ref_type == 'tag' && startsWith(github.ref_name, 'sanae-beta-')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $previousErrorAction = $ErrorActionPreference
+          $ErrorActionPreference = 'Continue'
+          gh release view "$env:GITHUB_REF_NAME" *> $null
+          $releaseExists = $LASTEXITCODE -eq 0
+          $ErrorActionPreference = $previousErrorAction
+          if ($releaseExists) {
+            gh release upload "$env:GITHUB_REF_NAME" `
+              "dist/${{ steps.package.outputs.portable }}" `
+              "dist/${{ steps.package.outputs.installer }}" --clobber
+          } else {
+            gh release create "$env:GITHUB_REF_NAME" `
+              "dist/${{ steps.package.outputs.portable }}" `
+              "dist/${{ steps.package.outputs.installer }}" `
+              --verify-tag `
+              --title "${{ steps.package.outputs.release_title }}" `
+              --generate-notes
+          }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

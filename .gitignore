@@ -1,0 +1,8 @@
+# Meson
+build*/
+/subprojects/*
+!/subprojects/*.wrap
+!/subprojects/packagefiles
+!/subprojects/csri
+!/subprojects/iconv
+!/subprojects/luabins
