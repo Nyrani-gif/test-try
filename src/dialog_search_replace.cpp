@@ -21,6 +21,7 @@
 
 #include "dialog_search_replace.h"
 
+#include "ass_file.h"
 #include "compat.h"
 #include "dialog_manager.h"
 #include "format.h"
