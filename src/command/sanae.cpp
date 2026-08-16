@@ -97,7 +97,8 @@ class ProjectSearchDialog final : public wxDialog {
 			list->SetItem(row, 2, to_wx(value.source));
 			list->SetItem(row, 3, to_wx(value.russian.empty() ? "—" : value.russian));
 			list->SetItem(row, 4, value.kind == SanaeRepeatKind::Similar
-				? _("Similar form") : _("Exact text"));
+				? _("Similar form")
+				: value.kind == SanaeRepeatKind::Span ? _("Across adjacent lines") : _("Exact text"));
 		}
 		if (results.empty())
 			details->ChangeValue(_("No matches were found in the synchronized project memory."));
@@ -199,6 +200,7 @@ class RepeatHistoryDialog final : public wxDialog {
 		auto const& match = matches[static_cast<std::size_t>(selected)];
 		wxString kind = match.kind == SanaeRepeatKind::Exact ? _("Exact source match")
 			: match.kind == SanaeRepeatKind::Fragment ? _("Previous line fragment")
+			: match.kind == SanaeRepeatKind::Span ? _("Split/merged previous lines")
 			: agi::wxformat(_("Similar source line (%.1f%%)"), match.similarity * 100.0);
 		details->ChangeValue(agi::wxformat(
 			_("%s\n\nEpisode %s · %s — %s\n\nEnglish:\n%s\n\nPrevious translation:\n%s"),

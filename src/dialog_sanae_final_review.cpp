@@ -12,6 +12,7 @@
 #include "sanae_text.h"
 #include "dialog_sanae_terminology.h"
 #include "selection_controller.h"
+#include "translation_project.h"
 
 #include <libaegisub/ass/time.h>
 
@@ -71,6 +72,7 @@ wxString issue_title(std::string const& value) {
 		return _("Possible inconsistent spelling");
 	if (value == "Exact ENSUB repeat") return _("Exact ENSUB repeat");
 	if (value == "ENSUB fragment repeat") return _("Previous line fragment");
+	if (value == "ENSUB split/merge repeat") return _("Split/merged previous lines");
 	if (value == "Similar ENSUB repeat") return _("Similar ENSUB repeat");
 	return to_wx(value);
 }
@@ -139,6 +141,7 @@ wxString candidate_reason(SanaeTerminologyCandidate const& candidate) {
 wxString repeat_kind(SanaeRepeatKind kind) {
 	if (kind == SanaeRepeatKind::Exact) return _("Exact match");
 	if (kind == SanaeRepeatKind::Fragment) return _("Previous line fragment");
+	if (kind == SanaeRepeatKind::Span) return _("Split/merged previous lines");
 	if (kind == SanaeRepeatKind::Similar) return _("Similar line");
 	return wxString();
 }
@@ -323,13 +326,16 @@ class FinalReviewDialog final : public wxDialog {
 		auto const& issue = repeat_issue_values[index];
 		auto match = manager.RepeatFor(issue.line);
 		if (!issue.line || !match) return;
-		auto current_ru = readable_line(*issue.line);
+		auto current_ru = match->kind == SanaeRepeatKind::Span && !match->current_span_russian.empty()
+			? match->current_span_russian : readable_line(*issue.line);
+		auto current_en = match->kind == SanaeRepeatKind::Span && !match->current_span_source.empty()
+			? match->current_span_source : context->translationProject->SourceDisplayTextCached(issue.line);
 		bool same_translation = !match->russian.empty()
 			&& SanaeNormalizeSource(current_ru) == SanaeNormalizeSource(match->russian);
 		wxString text = repeat_kind(match->kind);
 		text += agi::wxformat("\n\n%s · %s\nEN: %s\nRU: %s",
 			_("Now"), to_wx(agi::Time(issue.line->Start).GetAssFormatted(true)),
-			to_wx(context->translationProject->SourceDisplayTextCached(issue.line)), to_wx(current_ru));
+			to_wx(current_en), to_wx(current_ru));
 		text += agi::wxformat("\n\n%s · %s · %s\nEN: %s\nRU: %s",
 			_("Earlier"), to_wx(match->episode_code), to_wx(agi::Time(match->start).GetAssFormatted(true)),
 			to_wx(match->source), to_wx(match->russian.empty() ? "—" : match->russian));
@@ -339,6 +345,9 @@ class FinalReviewDialog final : public wxDialog {
 			text += _("\n\nThe previous translation can be reused for this exact match.");
 		else if (match->kind == SanaeRepeatKind::Fragment)
 			text += _("\n\nThis is a long exact fragment of an earlier line. The previous translation is reference only.");
+		else if (match->kind == SanaeRepeatKind::Span)
+			text += agi::wxformat(_("\n\nThe same or very similar source was split/merged differently (%d current lines ↔ %d previous lines). The previous translation is reference only."),
+				match->current_span_lines, match->source_span_lines);
 		else
 			text += _("\n\nThis is a similar line. The previous translation is reference only.");
 		repeat_context->ChangeValue(text);

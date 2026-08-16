@@ -15,14 +15,26 @@ std::string SanaeNormalizeSource(std::string text);
 /// normalization (NFKC/whitespace/case-folding) is applied.
 std::string SanaeNormalizeRepeatSource(std::string text);
 
-/// Conservative flashback/quotation fragment test. Returns true only when the
-/// two source strings share a long continuous token run which covers most of
-/// the shorter source. This deliberately rejects generic fragments such as
-/// "I think".
+/// Conservative flashback/quotation fragment score. Returns 0 when no useful
+/// continuous fragment exists; otherwise returns the coverage of the shorter
+/// source in the inclusive range (0, 1]. Six-token runs use the normal rule;
+/// distinctive five-token runs are accepted only under stricter information
+/// requirements.
+double SanaeSourceFragmentScore(std::string const& left, std::string const& right);
 bool SanaeSourceFragmentMatch(std::string const& left, std::string const& right);
+
+/// Candidate keys used by the project-memory fragment index. Keeping this in
+/// the text layer ensures that the index and final verifier use one policy.
+std::vector<std::string> SanaeRepeatFragmentKeys(std::string const& text);
 
 /// Normalized Levenshtein similarity in the inclusive range [0, 1].
 double SanaeSourceSimilarity(std::string const& left, std::string const& right,
+	double minimum = 0.0);
+
+/// Repeat-oriented phrase similarity. This combines character edit distance
+/// with token overlap and token order, so small insertions or local word moves
+/// can still match without treating arbitrary bags of words as equivalent.
+double SanaeSourcePhraseSimilarity(std::string const& left, std::string const& right,
 	double minimum = 0.0);
 
 /// Search normalization is intentionally broader than source-repeat
@@ -32,3 +44,8 @@ std::string SanaeNormalizeSearchText(std::string text);
 std::vector<std::string> SanaeSearchTokens(std::string const& text);
 std::string SanaeLightRussianStem(std::string token);
 bool SanaeSearchTokenMatches(std::string const& query, std::string const& candidate);
+
+/// Score a manual fuzzy project-search hit. Every query token must map to a
+/// distinct candidate token. Ordered hits rank above scattered hits while the
+/// old "all query words are present" behaviour remains available.
+double SanaeSearchPhraseScore(std::string const& query, std::string const& candidate);

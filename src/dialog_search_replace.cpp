@@ -23,6 +23,7 @@
 
 #include "compat.h"
 #include "dialog_manager.h"
+#include "format.h"
 #include "include/aegisub/context.h"
 #include "options.h"
 #include "search_replace_engine.h"

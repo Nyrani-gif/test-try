@@ -521,21 +521,6 @@ bool informative_for_similar(std::string const& normalized) {
 	return information >= 10 || (information >= 8 && words >= 3);
 }
 
-std::vector<std::string> repeat_fragment_keys(std::string const& normalized) {
-	auto tokens = SanaeSearchTokens(normalized);
-	std::vector<std::string> result;
-	if (tokens.size() < 6) return result;
-	result.reserve(tokens.size() - 5);
-	for (std::size_t i = 0; i + 6 <= tokens.size(); ++i) {
-		std::string key;
-		for (std::size_t j = 0; j < 6; ++j) {
-			if (!key.empty()) key.push_back('\x1f');
-			key += tokens[i + j];
-		}
-		result.push_back(std::move(key));
-	}
-	return result;
-}
 
 bool informative_for_internal_consistency(std::string const& normalized) {
 	static std::unordered_set<std::string> const trivial = {
@@ -1911,14 +1896,30 @@ void SanaeProjectManager::RebuildMemory() {
 	memory.clear();
 	exact_memory.clear();
 	exact_russian_memory.clear();
+	repeat_fragment_memory.clear();
+	repeat_token_memory.clear();
+	memory_spans.clear();
+	exact_span_memory.clear();
+	repeat_fragment_span_memory.clear();
+	repeat_token_span_memory.clear();
 	if (active_project.id.empty()) return;
 	std::string current_episode = ActiveEpisodeId();
 	auto current = FindEpisode(current_episode);
 	auto append_entries = [&](std::vector<MemoryEntry> const& entries) {
 		for (auto const& entry : entries) {
-			exact_memory[entry.normalized_source].push_back(memory.size());
+			auto index = memory.size();
+			exact_memory[entry.normalized_source].push_back(index);
 			if (!entry.normalized_russian.empty())
-				exact_russian_memory[entry.normalized_russian].push_back(memory.size());
+				exact_russian_memory[entry.normalized_russian].push_back(index);
+
+			std::unordered_set<std::string> unique_tokens;
+			for (auto& token : SanaeSearchTokens(entry.normalized_source))
+				if (unique_tokens.insert(token).second)
+					repeat_token_memory[std::move(token)].push_back(index);
+			std::unordered_set<std::string> unique_fragments;
+			for (auto& key : SanaeRepeatFragmentKeys(entry.normalized_source))
+				if (unique_fragments.insert(key).second)
+					repeat_fragment_memory[std::move(key)].push_back(index);
 			memory.push_back(entry);
 		}
 	};
@@ -1996,6 +1997,46 @@ void SanaeProjectManager::RebuildMemory() {
 			// project memory. A later Sync can restore it from the server.
 		}
 	}
+
+	// Build short adjacent-line spans once with immutable Project Memory. This
+	// catches subtitle segmentation changes (1↔2, 1↔3 and 2↔2) without a
+	// quadratic scan during translation. Spans never cross episodes or large
+	// pauses, and very large combined utterances are intentionally ignored.
+	for (std::size_t first = 0; first < memory.size(); ++first) {
+		std::string source;
+		std::string russian;
+		for (std::size_t last = first; last < memory.size() && last < first + 3; ++last) {
+			if (memory[last].episode_code != memory[first].episode_code) break;
+			if (last > first) {
+				auto const& previous = memory[last - 1];
+				if (memory[last].start < previous.start || memory[last].start - previous.end > 4500) break;
+			}
+			if (!source.empty()) source.push_back('\n');
+			source += memory[last].source;
+			if (!memory[last].russian.empty()) {
+				if (!russian.empty()) russian.push_back('\n');
+				russian += memory[last].russian;
+			}
+			if (last == first) continue;
+			auto normalized = SanaeNormalizeRepeatSource(source);
+			auto tokens = SanaeSearchTokens(normalized);
+			if (tokens.size() > 48) break;
+			if (tokens.size() < 4) continue;
+			auto index = memory_spans.size();
+			memory_spans.push_back({normalized, SanaeNormalizeSearchText(source), SanaeNormalizeSearchText(russian),
+				source, russian, memory[first].episode_code,
+				memory[first].start, memory[last].end, first, last, static_cast<int>(last - first + 1)});
+			exact_span_memory[normalized].push_back(index);
+			std::unordered_set<std::string> unique_tokens;
+			for (auto& token : tokens)
+				if (unique_tokens.insert(token).second)
+					repeat_token_span_memory[std::move(token)].push_back(index);
+			std::unordered_set<std::string> unique_fragments;
+			for (auto& key : SanaeRepeatFragmentKeys(normalized))
+				if (unique_fragments.insert(key).second)
+					repeat_fragment_span_memory[std::move(key)].push_back(index);
+		}
+	}
 }
 
 void SanaeProjectManager::RebuildRepeatCache() {
@@ -2005,69 +2046,320 @@ void SanaeProjectManager::RebuildRepeatCache() {
 		return;
 	}
 	double threshold = std::clamp(OPT_GET("Sanae/Project/Source Repeat/Similar Threshold")->GetDouble(), 0.80, 1.0);
-	std::unordered_map<unsigned char, std::vector<size_t>> buckets;
-	std::unordered_map<std::string, std::vector<size_t>> fragment_buckets;
-	for (size_t i = 0; i < memory.size(); ++i)
-		if (!memory[i].normalized_source.empty()) {
-			buckets[static_cast<unsigned char>(memory[i].normalized_source.front())].push_back(i);
-			std::unordered_set<std::string> emitted;
-			for (auto& key : repeat_fragment_keys(memory[i].normalized_source))
-				if (emitted.insert(key).second) fragment_buckets[std::move(key)].push_back(i);
-		}
-	std::unordered_map<std::string, SanaeRepeatMatch> calculated;
 
-	for (auto const& line : context->ass->Events) {
+	struct CurrentEntry {
+		AssDialogue *line = nullptr;
+		std::string source;
+		std::string russian;
+		std::string normalized;
+		int start = 0;
+		int end = 0;
+	};
+	std::vector<CurrentEntry> current;
+	current.reserve(context->ass->Events.size());
+	for (auto& line : context->ass->Events) {
+		if (line.Comment || has_drawing(line)) continue;
 		auto source = context->translationProject->SourceText(&line, " ");
 		if (source.empty()) source = context->translationProject->SourceDisplayTextCached(&line);
 		auto normalized = SanaeNormalizeRepeatSource(source);
 		if (normalized.empty()) continue;
-		auto ready = calculated.find(normalized);
-		if (ready != calculated.end()) {
-			if (ready->second.kind != SanaeRepeatKind::None) line_repeats.emplace(line.Id, ready->second);
-			continue;
-		}
+		current.push_back({&line, std::move(source), visible_text(line), std::move(normalized),
+			static_cast<int>(line.Start), static_cast<int>(line.End)});
+	}
+	if (current.empty() || memory.empty()) {
+		AnnounceChanged(SanaeProjectChange::Repeats);
+		return;
+	}
 
-		SanaeRepeatMatch result;
-		if (auto exact = exact_memory.find(normalized); exact != exact_memory.end() && !exact->second.empty()) {
-			auto const& found = memory[exact->second.back()];
-			result = {SanaeRepeatKind::Exact, 1.0, found.source, found.russian,
-				found.episode_code, found.start, found.end};
+	auto close_current = [&](std::size_t left, std::size_t right, int maximum_gap) {
+		return left < current.size() && right < current.size() && right == left + 1
+			&& current[right].start >= current[left].start
+			&& current[right].start - current[left].end <= maximum_gap;
+	};
+	auto close_memory = [&](std::size_t left, std::size_t right, int maximum_gap) {
+		return left < memory.size() && right < memory.size() && right == left + 1
+			&& memory[right].episode_code == memory[left].episode_code
+			&& memory[right].start >= memory[left].start
+			&& memory[right].start - memory[left].end <= maximum_gap;
+	};
+	auto context_pair = [&](std::string const& left, std::string const& right) {
+		if (left.empty() || right.empty() || !informative_for_similar(left) || !informative_for_similar(right))
+			return 0.0;
+		if (left == right) return 1.0;
+		auto score = SanaeSourcePhraseSimilarity(left, right, 0.0);
+		return score >= 0.78 ? score : 0.0;
+	};
+	auto context_score = [&](std::size_t current_first, std::size_t current_last,
+		std::size_t memory_first, std::size_t memory_last) {
+		double sum = 0.0;
+		int count = 0;
+		if (current_first > 0 && memory_first > 0
+			&& close_current(current_first - 1, current_first, 10000)
+			&& close_memory(memory_first - 1, memory_first, 10000)) {
+			auto score = context_pair(current[current_first - 1].normalized, memory[memory_first - 1].normalized_source);
+			if (score > 0.0) { sum += score; ++count; }
 		}
-		else {
-			std::unordered_set<size_t> fragment_candidates;
-			for (auto const& key : repeat_fragment_keys(normalized)) {
-				auto bucket = fragment_buckets.find(key);
-				if (bucket == fragment_buckets.end()) continue;
-				fragment_candidates.insert(bucket->second.begin(), bucket->second.end());
-			}
-			for (auto it = memory.rbegin(); it != memory.rend(); ++it) {
-				auto index = static_cast<size_t>(std::distance(it, memory.rend()) - 1);
-				if (!fragment_candidates.count(index)) continue;
-				if (!SanaeSourceFragmentMatch(source, it->source)) continue;
-				result = {SanaeRepeatKind::Fragment, 1.0, it->source, it->russian,
-					it->episode_code, it->start, it->end};
-				break;
-			}
+		if (current_last + 1 < current.size() && memory_last + 1 < memory.size()
+			&& close_current(current_last, current_last + 1, 10000)
+			&& close_memory(memory_last, memory_last + 1, 10000)) {
+			auto score = context_pair(current[current_last + 1].normalized, memory[memory_last + 1].normalized_source);
+			if (score > 0.0) { sum += score; ++count; }
 		}
-		if (result.kind == SanaeRepeatKind::None && threshold < 1.0 && informative_for_similar(normalized)) {
-			double best = threshold;
-			size_t best_index = std::numeric_limits<size_t>::max();
-			auto bucket = buckets.find(static_cast<unsigned char>(normalized.front()));
-			if (bucket != buckets.end()) {
-				for (size_t index : bucket->second) {
-					double score = SanaeSourceSimilarity(normalized, memory[index].normalized_source, threshold);
-					if (score >= best) { best = score; best_index = index; }
+		return count ? sum / count : 0.0;
+	};
+	auto contextual_rank = [](double score, double context) {
+		// Context is a tie-breaker/weak reranker only. It can move a candidate by
+		// at most 3.5 percentage points and can never manufacture a source match.
+		return score + context * 0.035;
+	};
+
+	auto retrieve_by_tokens = [&](std::string const& normalized, auto const& index, bool span_query = false) {
+		std::vector<std::size_t> result;
+		auto tokens = SanaeSearchTokens(normalized);
+		std::sort(tokens.begin(), tokens.end());
+		tokens.erase(std::unique(tokens.begin(), tokens.end()), tokens.end());
+		std::vector<std::pair<std::size_t, std::string const *>> indexed_tokens;
+		indexed_tokens.reserve(tokens.size());
+		for (auto const& token : tokens) {
+			auto bucket = index.find(token);
+			if (bucket != index.end()) indexed_tokens.emplace_back(bucket->second.size(), &token);
+		}
+		std::sort(indexed_tokens.begin(), indexed_tokens.end(), [](auto const& left, auto const& right) {
+			return left.first < right.first;
+		});
+		std::unordered_map<std::size_t, unsigned> hits;
+		for (std::size_t i = 0; i < std::min<std::size_t>(indexed_tokens.size(), 6); ++i) {
+			auto bucket = index.find(*indexed_tokens[i].second);
+			if (bucket == index.end()) continue;
+			for (auto candidate : bucket->second) ++hits[candidate];
+		}
+		unsigned minimum_hits = span_query
+			? (tokens.size() >= 8 ? 3u : 2u)
+			: (tokens.size() >= 5 ? 2u : 1u);
+		std::vector<std::pair<unsigned, std::size_t>> ranked;
+		for (auto const& [candidate, count] : hits)
+			if (count >= minimum_hits) ranked.emplace_back(count, candidate);
+		std::sort(ranked.begin(), ranked.end(), [](auto const& left, auto const& right) {
+			return left.first != right.first ? left.first > right.first : left.second > right.second;
+		});
+		if (ranked.size() > 160) ranked.resize(160);
+		result.reserve(ranked.size());
+		for (auto const& item : ranked) result.push_back(item.second);
+		return result;
+	};
+
+	auto make_memory_match = [&](SanaeRepeatKind kind, double score, double ctx, std::size_t index) {
+		auto const& found = memory[index];
+		SanaeRepeatMatch result{kind, score, found.source, found.russian,
+			found.episode_code, found.start, found.end};
+		result.context_similarity = ctx;
+		return result;
+	};
+	auto make_span_match = [&](double score, double ctx, std::size_t span_index, int current_lines) {
+		auto const& found = memory_spans[span_index];
+		SanaeRepeatMatch result{SanaeRepeatKind::Span, score, found.source, found.russian,
+			found.episode_code, found.start, found.end};
+		result.context_similarity = ctx;
+		result.current_span_lines = current_lines;
+		result.source_span_lines = found.line_count;
+		return result;
+	};
+	auto make_entry_span_match = [&](double score, double ctx, std::size_t index, int current_lines) {
+		auto result = make_memory_match(SanaeRepeatKind::Span, score, ctx, index);
+		result.current_span_lines = current_lines;
+		result.source_span_lines = 1;
+		return result;
+	};
+
+	std::vector<SanaeRepeatMatch> matches(current.size());
+	for (std::size_t current_index = 0; current_index < current.size(); ++current_index) {
+		auto const& item = current[current_index];
+
+		// 1) Exact visible text. If the same line occurred several times, use
+		// neighboring source lines to select the occurrence from the same scene.
+		if (auto exact = exact_memory.find(item.normalized); exact != exact_memory.end()) {
+			double best_context = -1.0;
+			std::size_t best_index = std::numeric_limits<std::size_t>::max();
+			for (auto index : exact->second) {
+				if (index >= memory.size()) continue;
+				auto ctx = context_score(current_index, current_index, index, index);
+				if (ctx > best_context || (ctx == best_context && index > best_index)) {
+					best_context = ctx;
+					best_index = index;
 				}
 			}
-			if (best_index != std::numeric_limits<size_t>::max()) {
-				auto const& found = memory[best_index];
-				result = {SanaeRepeatKind::Similar, best, found.source, found.russian,
-					found.episode_code, found.start, found.end};
+			if (best_index != std::numeric_limits<std::size_t>::max())
+				matches[current_index] = make_memory_match(SanaeRepeatKind::Exact, 1.0,
+					std::max(0.0, best_context), best_index);
+		}
+		if (matches[current_index].kind != SanaeRepeatKind::None) continue;
+
+		// 2) Exact continuous fragment/containment.
+		std::unordered_set<std::size_t> fragment_candidates;
+		for (auto const& key : SanaeRepeatFragmentKeys(item.normalized)) {
+			auto bucket = repeat_fragment_memory.find(key);
+			if (bucket != repeat_fragment_memory.end())
+				fragment_candidates.insert(bucket->second.begin(), bucket->second.end());
+		}
+		double best_rank = -1.0;
+		for (auto index : fragment_candidates) {
+			if (index >= memory.size()) continue;
+			auto score = SanaeSourceFragmentScore(item.source, memory[index].source);
+			if (score <= 0.0) continue;
+			auto ctx = context_score(current_index, current_index, index, index);
+			auto rank = contextual_rank(score, ctx);
+			if (rank > best_rank) {
+				best_rank = rank;
+				matches[current_index] = make_memory_match(SanaeRepeatKind::Fragment, score, ctx, index);
 			}
 		}
-		calculated.emplace(normalized, result);
-		if (result.kind != SanaeRepeatKind::None) line_repeats.emplace(line.Id, std::move(result));
+		if (matches[current_index].kind != SanaeRepeatKind::None) continue;
+
+		// 3) Lexical near-repeat. Candidate retrieval is token-indexed; only the
+		// small retrieved set pays the Unicode/token-aware similarity cost.
+		if (threshold < 1.0 && informative_for_similar(item.normalized)) {
+			best_rank = -1.0;
+			for (auto index : retrieve_by_tokens(item.normalized, repeat_token_memory)) {
+				if (index >= memory.size()) continue;
+				auto score = SanaeSourcePhraseSimilarity(item.normalized, memory[index].normalized_source, threshold);
+				if (score <= 0.0) continue;
+				auto ctx = context_score(current_index, current_index, index, index);
+				auto rank = contextual_rank(score, ctx);
+				if (rank > best_rank) {
+					best_rank = rank;
+					matches[current_index] = make_memory_match(SanaeRepeatKind::Similar, score, ctx, index);
+				}
+			}
+		}
 	}
+
+	// 4) Multi-line/split-merge repeat. Construct only 1–3 adjacent current
+	// source lines and compare them against indexed historical 1–3 line units.
+	// Exact/continuous span evidence may replace a weaker single-line Similar;
+	// fuzzy span evidence only fills a line which otherwise had no match.
+	for (std::size_t first = 0; first < current.size(); ++first) {
+		std::string current_source;
+		std::string current_russian;
+		for (std::size_t last = first; last < current.size() && last < first + 3; ++last) {
+			if (last > first && !close_current(last - 1, last, 4500)) break;
+			if (!current_source.empty()) current_source.push_back('\n');
+			current_source += current[last].source;
+			if (!current[last].russian.empty()) {
+				if (!current_russian.empty()) current_russian.push_back('\n');
+				current_russian += current[last].russian;
+			}
+			auto current_normalized = SanaeNormalizeRepeatSource(current_source);
+			auto current_tokens = SanaeSearchTokens(current_normalized);
+			if (current_tokens.size() > 48) break;
+			if (current_tokens.size() < 4) continue;
+			int current_line_count = static_cast<int>(last - first + 1);
+			if (current_line_count == 1) {
+				auto kind = matches[first].kind;
+				if (kind == SanaeRepeatKind::Exact || kind == SanaeRepeatKind::Fragment || kind == SanaeRepeatKind::Span)
+					continue;
+			}
+			else {
+				bool all_strong = true;
+				for (std::size_t index = first; index <= last; ++index)
+					all_strong = all_strong && (matches[index].kind == SanaeRepeatKind::Exact
+						|| matches[index].kind == SanaeRepeatKind::Fragment);
+				if (all_strong) continue;
+			}
+
+			int best_strength = 0; // 3 exact, 2 continuous fragment, 1 lexical
+			double best_score = 0.0;
+			double best_context = 0.0;
+			double best_combined_rank = -1.0;
+			bool best_is_span = false;
+			std::size_t best_index = std::numeric_limits<std::size_t>::max();
+
+			auto consider = [&](std::string const& historical_normalized, std::string const& historical_source,
+				std::size_t memory_first, std::size_t memory_last, bool historical_span, std::size_t index) {
+				int strength = 0;
+				double score = 0.0;
+				if (current_normalized == historical_normalized) {
+					strength = 3;
+					score = 1.0;
+				}
+				else if (auto fragment = SanaeSourceFragmentScore(current_source, historical_source); fragment > 0.0) {
+					strength = 2;
+					score = fragment;
+				}
+				else if (threshold < 1.0 && informative_for_similar(current_normalized)) {
+					score = SanaeSourcePhraseSimilarity(current_normalized, historical_normalized, threshold);
+					if (score > 0.0) strength = 1;
+				}
+				if (!strength) return;
+				auto ctx = context_score(first, last, memory_first, memory_last);
+				auto rank = contextual_rank(score, ctx);
+				if (strength > best_strength || (strength == best_strength && rank > best_combined_rank)) {
+					best_strength = strength;
+					best_score = score;
+					best_context = ctx;
+					best_combined_rank = rank;
+					best_is_span = historical_span;
+					best_index = index;
+				}
+			};
+
+			// A single current line is only interesting here against a historical
+			// span; multi-line current spans are compared against both one-line and
+			// span history, which covers 1↔2/3 and 2/3↔1/2/3 segmentation changes.
+			if (current_line_count > 1) {
+				std::unordered_set<std::size_t> candidates;
+				if (auto exact = exact_memory.find(current_normalized); exact != exact_memory.end())
+					candidates.insert(exact->second.begin(), exact->second.end());
+				for (auto const& key : SanaeRepeatFragmentKeys(current_normalized)) {
+					auto bucket = repeat_fragment_memory.find(key);
+					if (bucket != repeat_fragment_memory.end()) candidates.insert(bucket->second.begin(), bucket->second.end());
+				}
+				for (auto index : retrieve_by_tokens(current_normalized, repeat_token_memory, true)) candidates.insert(index);
+				for (auto index : candidates) {
+					if (index >= memory.size()) continue;
+					consider(memory[index].normalized_source, memory[index].source, index, index, false, index);
+				}
+			}
+
+			std::unordered_set<std::size_t> span_candidates;
+			if (auto exact = exact_span_memory.find(current_normalized); exact != exact_span_memory.end())
+				span_candidates.insert(exact->second.begin(), exact->second.end());
+			for (auto const& key : SanaeRepeatFragmentKeys(current_normalized)) {
+				auto bucket = repeat_fragment_span_memory.find(key);
+				if (bucket != repeat_fragment_span_memory.end()) span_candidates.insert(bucket->second.begin(), bucket->second.end());
+			}
+			for (auto index : retrieve_by_tokens(current_normalized, repeat_token_span_memory, true)) span_candidates.insert(index);
+			for (auto span_index : span_candidates) {
+				if (span_index >= memory_spans.size()) continue;
+				auto const& span = memory_spans[span_index];
+				consider(span.normalized_source, span.source, span.first_memory, span.last_memory, true, span_index);
+			}
+
+			if (!best_strength || best_index == std::numeric_limits<std::size_t>::max()) continue;
+			SanaeRepeatMatch proposed = best_is_span
+				? make_span_match(best_score, best_context, best_index, current_line_count)
+				: make_entry_span_match(best_score, best_context, best_index, current_line_count);
+			proposed.current_span_start = current[first].start;
+			proposed.current_span_end = current[last].end;
+			proposed.current_span_source = current_source;
+			proposed.current_span_russian = current_russian;
+			for (std::size_t index = first; index <= last; ++index) {
+				auto existing = matches[index].kind;
+				bool may_replace = existing == SanaeRepeatKind::None
+					|| (existing == SanaeRepeatKind::Similar && best_strength >= 2)
+					|| (existing == SanaeRepeatKind::Span
+						&& contextual_rank(proposed.similarity, proposed.context_similarity)
+						> contextual_rank(matches[index].similarity, matches[index].context_similarity));
+				if (may_replace) matches[index] = proposed;
+			}
+		}
+	}
+
+	// 5) Context-aware reranking has already been applied within every stage.
+	// It never creates a match: it only picks the best historical occurrence
+	// among candidates which passed the source-text evidence for that stage.
+	for (std::size_t i = 0; i < current.size(); ++i)
+		if (matches[i].kind != SanaeRepeatKind::None)
+			line_repeats.emplace(current[i].line->Id, std::move(matches[i]));
 	AnnounceChanged(SanaeProjectChange::Repeats);
 }
 
@@ -2086,16 +2378,23 @@ std::vector<SanaeRepeatMatch> SanaeProjectManager::RepeatsFor(AssDialogue const 
 	if (normalized.empty()) return result;
 	if (auto exact = exact_memory.find(normalized); exact != exact_memory.end()) {
 		result.reserve(exact->second.size());
+		auto preferred = RepeatFor(line);
+		if (preferred && preferred->kind == SanaeRepeatKind::Exact)
+			result.push_back(*preferred);
 		for (auto index : exact->second) {
 			if (index >= memory.size()) continue;
 			auto const& found = memory[index];
+			if (preferred && preferred->kind == SanaeRepeatKind::Exact
+				&& found.episode_code == preferred->episode_code && found.start == preferred->start
+				&& found.end == preferred->end) continue;
 			result.push_back({SanaeRepeatKind::Exact, 1.0, found.source, found.russian,
 				found.episode_code, found.start, found.end});
 		}
 		return result;
 	}
 	if (auto fallback = RepeatFor(line); fallback
-		&& (fallback->kind == SanaeRepeatKind::Fragment || fallback->kind == SanaeRepeatKind::Similar))
+		&& (fallback->kind == SanaeRepeatKind::Fragment || fallback->kind == SanaeRepeatKind::Span
+			|| fallback->kind == SanaeRepeatKind::Similar))
 		result.push_back(*fallback);
 	return result;
 }
@@ -2115,27 +2414,25 @@ std::vector<SanaeRepeatMatch> SanaeProjectManager::SearchMemory(SanaeSearchOptio
 			entry.episode_code, entry.start, entry.end});
 	};
 
-	// Full-line exact queries are indexed and avoid a corpus scan.
-	auto source_key = SanaeNormalizeSource(options.query);
+	// Full-line exact queries are indexed and avoid a corpus scan. ENSUB uses
+	// repeat normalization so harmless presentation markup does not defeat a
+	// manual full-line lookup; RUSUB keeps ordinary text normalization.
+	auto source_key = SanaeNormalizeRepeatSource(options.query);
+	auto russian_key = SanaeNormalizeSource(options.query);
 	if (options.scope != SanaeSearchScope::Russian) {
 		if (auto found = exact_memory.find(source_key); found != exact_memory.end())
 			for (auto index : found->second) emit(index, SanaeRepeatKind::Exact);
 	}
 	if (options.scope != SanaeSearchScope::English) {
-		if (auto found = exact_russian_memory.find(source_key); found != exact_russian_memory.end())
+		if (auto found = exact_russian_memory.find(russian_key); found != exact_russian_memory.end())
 			for (auto index : found->second) emit(index, SanaeRepeatKind::Exact);
 	}
 	auto query_tokens = SanaeSearchTokens(options.query);
-	auto fuzzy_matches = [&](std::string const& text) {
-		if (!options.fuzzy_word_forms || query_tokens.empty()) return false;
-		auto tokens = SanaeSearchTokens(text);
-		return std::all_of(query_tokens.begin(), query_tokens.end(), [&](auto const& query_token) {
-			return std::any_of(tokens.begin(), tokens.end(), [&](auto const& token) {
-				return SanaeSearchTokenMatches(query_token, token);
-			});
-		});
+	auto fuzzy_score = [&](std::string const& text) {
+		if (!options.fuzzy_word_forms || query_tokens.empty()) return 0.0;
+		return SanaeSearchPhraseScore(options.query, text);
 	};
-	for (std::size_t index = 0; index < memory.size() && result.size() < options.limit; ++index) {
+	for (std::size_t index = 0; index < memory.size(); ++index) {
 		auto const& entry = memory[index];
 		if (!accepts_episode(entry) || emitted.count(index)) continue;
 		bool english_exact = false, russian_exact = false;
@@ -2147,36 +2444,160 @@ std::vector<SanaeRepeatMatch> SanaeProjectManager::SearchMemory(SanaeSearchOptio
 			emit(index, SanaeRepeatKind::Exact);
 			continue;
 		}
-		bool fuzzy = (options.scope != SanaeSearchScope::Russian && fuzzy_matches(entry.source))
-			|| (options.scope != SanaeSearchScope::English && fuzzy_matches(entry.russian));
-		if (fuzzy) emit(index, SanaeRepeatKind::Similar);
+		double fuzzy = 0.0;
+		if (options.scope != SanaeSearchScope::Russian) fuzzy = std::max(fuzzy, fuzzy_score(entry.source));
+		if (options.scope != SanaeSearchScope::English) fuzzy = std::max(fuzzy, fuzzy_score(entry.russian));
+		if (fuzzy > 0.0) emit(index, SanaeRepeatKind::Similar, fuzzy);
+	}
+
+	// Search short historical spans as well, but only when the query is not
+	// already contained/fuzzily matched inside one constituent line. This makes
+	// project search cross subtitle segmentation boundaries without flooding the
+	// result list with duplicate 1-line + 2-line hits.
+	if (query_tokens.size() >= 2) {
+		for (auto const& span : memory_spans) {
+			if (!options.episode_code.empty() && span.episode_code != options.episode_code) continue;
+			auto constituent_exact = [&](bool english) {
+				for (std::size_t index = span.first_memory; index <= span.last_memory && index < memory.size(); ++index) {
+					auto const& text = english ? memory[index].search_source : memory[index].search_russian;
+					if (text.find(normalized) != std::string::npos) return true;
+				}
+				return false;
+			};
+			bool english_exact = options.scope != SanaeSearchScope::Russian
+				&& span.search_source.find(normalized) != std::string::npos && !constituent_exact(true);
+			bool russian_exact = options.scope != SanaeSearchScope::English
+				&& span.search_russian.find(normalized) != std::string::npos && !constituent_exact(false);
+			double score = (english_exact || russian_exact) ? 1.0 : 0.0;
+			if (score == 0.0 && options.fuzzy_word_forms) {
+				if (options.scope != SanaeSearchScope::Russian)
+					score = std::max(score, SanaeSearchPhraseScore(options.query, span.source));
+				if (options.scope != SanaeSearchScope::English)
+					score = std::max(score, SanaeSearchPhraseScore(options.query, span.russian));
+				if (score > 0.0) {
+					double constituent_best = 0.0;
+					for (std::size_t index = span.first_memory; index <= span.last_memory && index < memory.size(); ++index) {
+						if (options.scope != SanaeSearchScope::Russian)
+							constituent_best = std::max(constituent_best, SanaeSearchPhraseScore(options.query, memory[index].source));
+						if (options.scope != SanaeSearchScope::English)
+							constituent_best = std::max(constituent_best, SanaeSearchPhraseScore(options.query, memory[index].russian));
+					}
+					if (constituent_best >= score) score = 0.0;
+				}
+			}
+			if (score > 0.0) {
+				SanaeRepeatMatch match{SanaeRepeatKind::Span, score, span.source, span.russian,
+					span.episode_code, span.start, span.end};
+				match.source_span_lines = span.line_count;
+				result.push_back(std::move(match));
+			}
+		}
 	}
 
 	// The synchronized memory intentionally excludes the open episode from
 	// repeat history. Project search, however, is expected to search that open
-	// working ASS too, so add it dynamically without polluting repeat indexes.
-	if (result.size() < options.limit && HasOpenEpisode()) {
-		auto current = ActiveEpisode();
-		if (current && (options.episode_code.empty() || options.episode_code == current->episode_code)) {
+	// working ASS too, including phrases crossing 2–3 adjacent subtitle lines.
+	if (HasOpenEpisode()) {
+		auto active = ActiveEpisode();
+		if (active && (options.episode_code.empty() || options.episode_code == active->episode_code)) {
+			struct OpenSearchEntry {
+				std::string source;
+				std::string russian;
+				std::string search_source;
+				std::string search_russian;
+				int start = 0;
+				int end = 0;
+			};
+			std::vector<OpenSearchEntry> open;
 			for (auto const& line : context->ass->Events) {
-				if (result.size() >= options.limit || line.Comment || has_drawing(line)) continue;
+				if (line.Comment || has_drawing(line)) continue;
 				auto source = context->translationProject->SourceDisplayTextCached(&line);
 				auto russian = visible_text(line);
+				if (SanaeNormalizeSource(source).empty() && SanaeNormalizeSource(russian).empty()) continue;
+				auto search_source = SanaeNormalizeSearchText(source);
+				auto search_russian = SanaeNormalizeSearchText(russian);
+				open.push_back({std::move(source), std::move(russian),
+					std::move(search_source), std::move(search_russian),
+					static_cast<int>(line.Start), static_cast<int>(line.End)});
+				auto const& entry = open.back();
 				bool english_exact = options.scope != SanaeSearchScope::Russian
-					&& SanaeNormalizeSearchText(source).find(normalized) != std::string::npos;
+					&& entry.search_source.find(normalized) != std::string::npos;
 				bool russian_exact = options.scope != SanaeSearchScope::English
-					&& SanaeNormalizeSearchText(russian).find(normalized) != std::string::npos;
+					&& entry.search_russian.find(normalized) != std::string::npos;
 				SanaeRepeatKind kind = SanaeRepeatKind::None;
+				double score = 1.0;
 				if (english_exact || russian_exact) kind = SanaeRepeatKind::Exact;
-				else if ((options.scope != SanaeSearchScope::Russian && fuzzy_matches(source))
-					|| (options.scope != SanaeSearchScope::English && fuzzy_matches(russian)))
-					kind = SanaeRepeatKind::Similar;
+				else {
+					double fuzzy = 0.0;
+					if (options.scope != SanaeSearchScope::Russian) fuzzy = std::max(fuzzy, fuzzy_score(entry.source));
+					if (options.scope != SanaeSearchScope::English) fuzzy = std::max(fuzzy, fuzzy_score(entry.russian));
+					if (fuzzy > 0.0) { kind = SanaeRepeatKind::Similar; score = fuzzy; }
+				}
 				if (kind != SanaeRepeatKind::None)
-					result.push_back({kind, 1.0, std::move(source), std::move(russian),
-						current->episode_code, static_cast<int>(line.Start), static_cast<int>(line.End)});
+					result.push_back({kind, score, entry.source, entry.russian,
+						active->episode_code, entry.start, entry.end});
+			}
+
+			if (query_tokens.size() >= 2) {
+				for (std::size_t first = 0; first < open.size(); ++first) {
+					std::string source = open[first].source;
+					std::string russian = open[first].russian;
+					for (std::size_t last = first + 1; last < open.size() && last < first + 3; ++last) {
+						if (open[last].start < open[last - 1].start || open[last].start - open[last - 1].end > 4500) break;
+						source += "\n" + open[last].source;
+						if (!open[last].russian.empty()) {
+							if (!russian.empty()) russian.push_back('\n');
+							russian += open[last].russian;
+						}
+						auto search_source = SanaeNormalizeSearchText(source);
+						auto search_russian = SanaeNormalizeSearchText(russian);
+						auto constituent_exact = [&](bool english) {
+							for (std::size_t i = first; i <= last; ++i) {
+								auto const& text = english ? open[i].search_source : open[i].search_russian;
+								if (text.find(normalized) != std::string::npos) return true;
+							}
+							return false;
+						};
+						bool english_exact = options.scope != SanaeSearchScope::Russian
+							&& search_source.find(normalized) != std::string::npos && !constituent_exact(true);
+						bool russian_exact = options.scope != SanaeSearchScope::English
+							&& search_russian.find(normalized) != std::string::npos && !constituent_exact(false);
+						double score = (english_exact || russian_exact) ? 1.0 : 0.0;
+						if (score == 0.0 && options.fuzzy_word_forms) {
+							if (options.scope != SanaeSearchScope::Russian) score = std::max(score, fuzzy_score(source));
+							if (options.scope != SanaeSearchScope::English) score = std::max(score, fuzzy_score(russian));
+							if (score > 0.0) {
+								double constituent_best = 0.0;
+								for (std::size_t i = first; i <= last; ++i) {
+									if (options.scope != SanaeSearchScope::Russian)
+										constituent_best = std::max(constituent_best, fuzzy_score(open[i].source));
+									if (options.scope != SanaeSearchScope::English)
+										constituent_best = std::max(constituent_best, fuzzy_score(open[i].russian));
+								}
+								if (constituent_best >= score) score = 0.0;
+							}
+						}
+						if (score > 0.0) {
+							SanaeRepeatMatch match{SanaeRepeatKind::Span, score, source, russian,
+								active->episode_code, open[first].start, open[last].end};
+							match.source_span_lines = static_cast<int>(last - first + 1);
+							result.push_back(std::move(match));
+						}
+					}
+				}
 			}
 		}
 	}
+	std::stable_sort(result.begin(), result.end(), [](auto const& left, auto const& right) {
+		auto priority = [](SanaeRepeatKind kind) {
+			return kind == SanaeRepeatKind::Exact ? 3
+				: kind == SanaeRepeatKind::Span ? 2
+				: kind == SanaeRepeatKind::Similar ? 1 : 0;
+		};
+		if (priority(left.kind) != priority(right.kind)) return priority(left.kind) > priority(right.kind);
+		return left.similarity > right.similarity;
+	});
+	if (result.size() > options.limit) result.resize(options.limit);
 	return result;
 }
 
@@ -2516,15 +2937,23 @@ std::vector<SanaeReviewIssue> SanaeProjectManager::InternalConsistencyIssues() c
 
 std::vector<SanaeReviewIssue> SanaeProjectManager::SourceRepeatIssues() const {
 	std::vector<SanaeReviewIssue> issues;
+	std::unordered_set<std::string> emitted_spans;
 	for (auto& line : context->ass->Events) {
 		auto repeat = RepeatFor(&line);
 		if (!repeat) continue;
+		if (repeat->kind == SanaeRepeatKind::Span) {
+			auto key = repeat->episode_code + ":" + std::to_string(repeat->start) + ":"
+				+ std::to_string(repeat->end) + ":" + std::to_string(repeat->current_span_start)
+				+ ":" + std::to_string(repeat->current_span_end);
+			if (!emitted_spans.insert(std::move(key)).second) continue;
+		}
 		std::ostringstream detail;
 		detail << repeat->episode_code << " · " << agi::Time(repeat->start).GetAssFormatted(true)
 			<< ": " << repeat->source;
 		if (!repeat->russian.empty()) detail << " → " << repeat->russian;
 		char const *title = repeat->kind == SanaeRepeatKind::Exact ? "Exact ENSUB repeat"
-			: repeat->kind == SanaeRepeatKind::Fragment ? "ENSUB fragment repeat" : "Similar ENSUB repeat";
+			: repeat->kind == SanaeRepeatKind::Fragment ? "ENSUB fragment repeat"
+			: repeat->kind == SanaeRepeatKind::Span ? "ENSUB split/merge repeat" : "Similar ENSUB repeat";
 		issues.push_back({title, detail.str(), &line});
 	}
 	return issues;

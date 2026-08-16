@@ -124,7 +124,7 @@ struct SanaeIgnoredCandidate {
 	bool deleted = false;
 };
 
-enum class SanaeRepeatKind { None, Similar, Fragment, Exact };
+enum class SanaeRepeatKind { None, Similar, Span, Fragment, Exact };
 
 struct SanaeRepeatMatch {
 	SanaeRepeatKind kind = SanaeRepeatKind::None;
@@ -134,6 +134,13 @@ struct SanaeRepeatMatch {
 	std::string episode_code;
 	int start = 0;
 	int end = 0;
+	double context_similarity = 0.0;
+	int current_span_lines = 1;
+	int source_span_lines = 1;
+	int current_span_start = 0;
+	int current_span_end = 0;
+	std::string current_span_source;
+	std::string current_span_russian;
 };
 
 struct SanaeTerminologyDraft {
@@ -207,6 +214,19 @@ class SanaeProjectManager final : private agi::signal::ConnectionScope {
 		int start = 0;
 		int end = 0;
 	};
+	struct MemorySpan {
+		std::string normalized_source;
+		std::string search_source;
+		std::string search_russian;
+		std::string source;
+		std::string russian;
+		std::string episode_code;
+		int start = 0;
+		int end = 0;
+		std::size_t first_memory = 0;
+		std::size_t last_memory = 0;
+		int line_count = 0;
+	};
 
 	agi::Context *context = nullptr;
 	std::vector<SanaeSeasonInfo> seasons;
@@ -226,6 +246,14 @@ class SanaeProjectManager final : private agi::signal::ConnectionScope {
 	std::unordered_map<std::string, std::vector<MemoryEntry>> parsed_memory_cache;
 	std::unordered_map<std::string, std::vector<std::size_t>> exact_memory;
 	std::unordered_map<std::string, std::vector<std::size_t>> exact_russian_memory;
+	/// Repeat retrieval indexes are rebuilt only when immutable project memory
+	/// changes, not every time the current episode repeat cache is refreshed.
+	std::unordered_map<std::string, std::vector<std::size_t>> repeat_fragment_memory;
+	std::unordered_map<std::string, std::vector<std::size_t>> repeat_token_memory;
+	std::vector<MemorySpan> memory_spans;
+	std::unordered_map<std::string, std::vector<std::size_t>> exact_span_memory;
+	std::unordered_map<std::string, std::vector<std::size_t>> repeat_fragment_span_memory;
+	std::unordered_map<std::string, std::vector<std::size_t>> repeat_token_span_memory;
 	std::unordered_map<int, SanaeRepeatMatch> line_repeats;
 	std::string pending_enroll_request;
 	std::string pending_enroll_key;

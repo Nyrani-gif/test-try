@@ -11488,3 +11488,16 @@ msgstr "Перейти к строке"
 #: ../src/dialog_sanae_final_review.cpp
 msgid "%d warning(s) · %d recommendation(s) · %d informational. Finalization is available at any time."
 msgstr "Замечаний: %d · рекомендаций: %d · информационных: %d. Финализировать серию можно в любой момент."
+
+#: ../src/dialog_sanae_final_review.cpp ../src/command/sanae.cpp
+msgid "Split/merged previous lines"
+msgstr "Другое разбиение прошлой реплики"
+
+#: ../src/dialog_sanae_final_review.cpp
+#, c-format
+msgid "\n\nThe same or very similar source was split/merged differently (%d current lines ↔ %d previous lines). The previous translation is reference only."
+msgstr "\n\nТа же или очень похожая реплика была разбита на строки иначе (%d сейчас ↔ %d раньше). Прошлый перевод показан только для справки."
+
+#: ../src/command/sanae.cpp
+msgid "Across adjacent lines"
+msgstr "Через соседние строки"
