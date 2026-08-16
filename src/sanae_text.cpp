@@ -279,6 +279,12 @@ double SanaeSourcePhraseSimilarity(std::string const& left, std::string const& r
 	double character_score = SanaeSourceSimilarity(normalized_left, normalized_right, 0.0);
 	auto left_tokens = repeat_tokens(normalized_left);
 	auto right_tokens = repeat_tokens(normalized_right);
+
+	// Punctuation and presentation differences must not reduce an otherwise
+	// identical visible phrase to a fuzzy match.
+	if (left_tokens == right_tokens && !left_tokens.empty())
+		return 1.0;
+
 	if (left_tokens.size() < 3 || right_tokens.size() < 3)
 		return character_score >= minimum ? character_score : 0.0;
 
@@ -291,14 +297,13 @@ double SanaeSourcePhraseSimilarity(std::string const& left, std::string const& r
 	double length_coverage = static_cast<double>(shorter) / longer;
 	double phrase_score = 0.55 * ordered_coverage + 0.35 * overlap_coverage + 0.10 * length_coverage;
 	double score = std::max(character_score, phrase_score);
-	// A polarity flip is too dangerous to call a high-confidence reusable
-	// repeat even when the surrounding sentence is almost identical.
-	if (has_negation_token(left_tokens) != has_negation_token(right_tokens)) score = std::min(score, 0.90);
-	// Numbers often carry the one fact which must not be silently inherited
-	// from a previous translation (dates, ages, quantities, episode counts).
-	// Keep the line discoverable at lower thresholds, but not as the default
-	// high-confidence Similar match when the numeric payload changed.
-	if (numeric_tokens(left_tokens) != numeric_tokens(right_tokens)) score = std::min(score, 0.90);
+
+	if (has_negation_token(left_tokens) != has_negation_token(right_tokens))
+		score = std::min(score, 0.90);
+
+	if (numeric_tokens(left_tokens) != numeric_tokens(right_tokens))
+		score = std::min(score, 0.90);
+
 	return score >= minimum ? score : 0.0;
 }
 
