@@ -21,6 +21,7 @@
 
 #include "dialog_search_replace.h"
 
+#include "ass_dialogue.h"
 #include "ass_file.h"
 #include "compat.h"
 #include "dialog_manager.h"
@@ -37,6 +38,7 @@
 
 #include <functional>
 #include <algorithm>
+#include <memory>
 #include <string>
 #include <vector>
 

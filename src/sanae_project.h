@@ -241,6 +241,9 @@ class SanaeProjectManager final : private agi::signal::ConnectionScope {
 	std::vector<SanaeTerminologyDraft> terminology_drafts;
 	std::vector<SanaeIgnoreDraft> ignore_drafts;
 	std::vector<MemoryEntry> memory;
+	// Все финализированные серии проекта, независимо от позиции
+	// текущего эпизода. Используется только поиском по проекту.
+	std::vector<MemoryEntry> project_search_memory;
 	/// Immutable server file ids/SHA pairs map to parsed normalized corpus
 	/// entries. Repeated Sync calls reuse unchanged episodes in-process.
 	std::unordered_map<std::string, std::vector<MemoryEntry>> parsed_memory_cache;

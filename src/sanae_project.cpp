@@ -677,8 +677,8 @@ SanaeProjectManager::~SanaeProjectManager() {
 void SanaeProjectManager::ConfigureRecoveryTimer() {
 	int minutes = static_cast<int>(std::clamp(
 		OPT_GET("Sanae/Project/Recovery/Check Interval Minutes")->GetInt(),
-		int64_t{5},
-		int64_t{15}));
+		std::int64_t{5},
+		std::int64_t{15}));
 	if (OPT_GET("Sanae/Project/Recovery/Enabled")->GetBool())
 		recovery_timer.Start(minutes * 60 * 1000);
 	else recovery_timer.Stop();
@@ -1894,6 +1894,7 @@ void SanaeProjectManager::OnAssCommit(int, AssDialogue const *) {
 
 void SanaeProjectManager::RebuildMemory() {
 	memory.clear();
+	project_search_memory.clear();
 	exact_memory.clear();
 	exact_russian_memory.clear();
 	repeat_fragment_memory.clear();
@@ -1923,6 +1924,9 @@ void SanaeProjectManager::RebuildMemory() {
 			memory.push_back(entry);
 		}
 	};
+	auto append_search_entries = [&](std::vector<MemoryEntry> const& entries) {
+		project_search_memory.insert(project_search_memory.end(), entries.begin(), entries.end());
+	};
 
 	std::vector<SanaeEpisodeInfo const *> ordered_episodes;
 	ordered_episodes.reserve(episodes.size());
@@ -1934,8 +1938,9 @@ void SanaeProjectManager::RebuildMemory() {
 	for (auto episode_ptr : ordered_episodes) {
 		auto const& episode = *episode_ptr;
 		if (episode.id == current_episode || episode.current_finalized_revision_id.empty()) continue;
-		if (current && std::tie(episode.sort_order, episode.episode_code)
-			>= std::tie(current->sort_order, current->episode_code)) continue;
+		bool previous_episode = !current
+			|| std::tie(episode.sort_order, episode.episode_code)
+				< std::tie(current->sort_order, current->episode_code);
 		auto revision = std::find_if(finalized_revisions.begin(), finalized_revisions.end(), [&](auto const& value) {
 			return value.id == episode.current_finalized_revision_id;
 		});
@@ -1949,7 +1954,8 @@ void SanaeProjectManager::RebuildMemory() {
 			+ (source_file ? source_file->sha256 : revision->source_file_id) + ":"
 			+ (rusub_file ? rusub_file->sha256 : revision->compact_rusub_file_id);
 		if (auto cached = parsed_memory_cache.find(cache_key); cached != parsed_memory_cache.end()) {
-			append_entries(cached->second);
+			append_search_entries(cached->second);
+			if (previous_episode) append_entries(cached->second);
 			continue;
 		}
 
@@ -1989,7 +1995,8 @@ void SanaeProjectManager::RebuildMemory() {
 					std::move(source_text), std::move(russian),
 					episode.episode_code, static_cast<int>(line.Start), static_cast<int>(line.End)});
 			}
-			append_entries(parsed_entries);
+			append_search_entries(parsed_entries);
+			if (previous_episode) append_entries(parsed_entries);
 			parsed_memory_cache.emplace(std::move(cache_key), std::move(parsed_entries));
 		}
 		catch (...) {
@@ -2403,139 +2410,183 @@ std::vector<SanaeRepeatMatch> SanaeProjectManager::SearchMemory(SanaeSearchOptio
 	std::vector<SanaeRepeatMatch> result;
 	auto normalized = SanaeNormalizeSearchText(options.query);
 	if (normalized.empty()) return result;
-	auto accepts_episode = [&](MemoryEntry const& entry) {
-		return options.episode_code.empty() || entry.episode_code == options.episode_code;
-	};
-	std::unordered_set<std::size_t> emitted;
-	auto emit = [&](std::size_t index, SanaeRepeatKind kind, double score = 1.0) {
-		if (index >= memory.size() || !accepts_episode(memory[index]) || !emitted.insert(index).second) return;
-		auto const& entry = memory[index];
-		result.push_back({kind, score, entry.source, entry.russian,
-			entry.episode_code, entry.start, entry.end});
-	};
 
-	// Full-line exact queries are indexed and avoid a corpus scan. ENSUB uses
-	// repeat normalization so harmless presentation markup does not defeat a
-	// manual full-line lookup; RUSUB keeps ordinary text normalization.
 	auto source_key = SanaeNormalizeRepeatSource(options.query);
 	auto russian_key = SanaeNormalizeSource(options.query);
-	if (options.scope != SanaeSearchScope::Russian) {
-		if (auto found = exact_memory.find(source_key); found != exact_memory.end())
-			for (auto index : found->second) emit(index, SanaeRepeatKind::Exact);
-	}
-	if (options.scope != SanaeSearchScope::English) {
-		if (auto found = exact_russian_memory.find(russian_key); found != exact_russian_memory.end())
-			for (auto index : found->second) emit(index, SanaeRepeatKind::Exact);
-	}
 	auto query_tokens = SanaeSearchTokens(options.query);
+	auto accepts_episode_code = [&](std::string const& episode_code) {
+		return options.episode_code.empty() || episode_code == options.episode_code;
+	};
 	auto fuzzy_score = [&](std::string const& text) {
-		if (!options.fuzzy_word_forms || query_tokens.empty()) return 0.0;
+		if (!options.fuzzy_word_forms || query_tokens.empty() || text.empty()) return 0.0;
 		return SanaeSearchPhraseScore(options.query, text);
 	};
-	for (std::size_t index = 0; index < memory.size(); ++index) {
-		auto const& entry = memory[index];
-		if (!accepts_episode(entry) || emitted.count(index)) continue;
-		bool english_exact = false, russian_exact = false;
-		if (options.scope != SanaeSearchScope::Russian)
-			english_exact = entry.search_source.find(normalized) != std::string::npos;
-		if (options.scope != SanaeSearchScope::English)
-			russian_exact = entry.search_russian.find(normalized) != std::string::npos;
+
+	// Project search has different semantics from repeat detection. Repeat
+	// memory contains only earlier episodes, while project_search_memory holds
+	// every finalized non-current episode in the synchronized project.
+	auto append_project_entry = [&](MemoryEntry const& entry) {
+		if (!accepts_episode_code(entry.episode_code)) return;
+		bool english_exact = false;
+		bool russian_exact = false;
+		if (options.scope != SanaeSearchScope::Russian) {
+			english_exact = entry.normalized_source == source_key
+				|| entry.search_source.find(normalized) != std::string::npos;
+		}
+		if (options.scope != SanaeSearchScope::English) {
+			russian_exact = entry.normalized_russian == russian_key
+				|| entry.search_russian.find(normalized) != std::string::npos;
+		}
 		if (english_exact || russian_exact) {
-			emit(index, SanaeRepeatKind::Exact);
-			continue;
+			result.push_back({SanaeRepeatKind::Exact, 1.0, entry.source, entry.russian,
+				entry.episode_code, entry.start, entry.end});
+			return;
 		}
 		double fuzzy = 0.0;
-		if (options.scope != SanaeSearchScope::Russian) fuzzy = std::max(fuzzy, fuzzy_score(entry.source));
-		if (options.scope != SanaeSearchScope::English) fuzzy = std::max(fuzzy, fuzzy_score(entry.russian));
-		if (fuzzy > 0.0) emit(index, SanaeRepeatKind::Similar, fuzzy);
-	}
+		if (options.scope != SanaeSearchScope::Russian)
+			fuzzy = std::max(fuzzy, fuzzy_score(entry.source));
+		if (options.scope != SanaeSearchScope::English)
+			fuzzy = std::max(fuzzy, fuzzy_score(entry.russian));
+		if (fuzzy > 0.0)
+			result.push_back({SanaeRepeatKind::Similar, fuzzy, entry.source, entry.russian,
+				entry.episode_code, entry.start, entry.end});
+	};
 
-	// Search short historical spans as well, but only when the query is not
-	// already contained/fuzzily matched inside one constituent line. This makes
-	// project search cross subtitle segmentation boundaries without flooding the
-	// result list with duplicate 1-line + 2-line hits.
+	for (auto const& entry : project_search_memory)
+		append_project_entry(entry);
+
+	// Cross-line search for all finalized non-current episodes. These spans are
+	// intentionally built from project_search_memory rather than memory_spans,
+	// because memory_spans only contains earlier episodes for repeat detection.
 	if (query_tokens.size() >= 2) {
-		for (auto const& span : memory_spans) {
-			if (!options.episode_code.empty() && span.episode_code != options.episode_code) continue;
-			auto constituent_exact = [&](bool english) {
-				for (std::size_t index = span.first_memory; index <= span.last_memory && index < memory.size(); ++index) {
-					auto const& text = english ? memory[index].search_source : memory[index].search_russian;
-					if (text.find(normalized) != std::string::npos) return true;
+		for (std::size_t first = 0; first < project_search_memory.size(); ++first) {
+			if (!accepts_episode_code(project_search_memory[first].episode_code)) continue;
+			std::string source = project_search_memory[first].source;
+			std::string russian = project_search_memory[first].russian;
+			for (std::size_t last = first + 1;
+				last < project_search_memory.size() && last < first + 3; ++last)
+			{
+				auto const& previous = project_search_memory[last - 1];
+				auto const& current = project_search_memory[last];
+				if (current.episode_code != project_search_memory[first].episode_code) break;
+				if (current.start < previous.start || current.start - previous.end > 4500) break;
+
+				source += "\n" + current.source;
+				if (!current.russian.empty()) {
+					if (!russian.empty()) russian.push_back('\n');
+					russian += current.russian;
 				}
-				return false;
-			};
-			bool english_exact = options.scope != SanaeSearchScope::Russian
-				&& span.search_source.find(normalized) != std::string::npos && !constituent_exact(true);
-			bool russian_exact = options.scope != SanaeSearchScope::English
-				&& span.search_russian.find(normalized) != std::string::npos && !constituent_exact(false);
-			double score = (english_exact || russian_exact) ? 1.0 : 0.0;
-			if (score == 0.0 && options.fuzzy_word_forms) {
-				if (options.scope != SanaeSearchScope::Russian)
-					score = std::max(score, SanaeSearchPhraseScore(options.query, span.source));
-				if (options.scope != SanaeSearchScope::English)
-					score = std::max(score, SanaeSearchPhraseScore(options.query, span.russian));
-				if (score > 0.0) {
-					double constituent_best = 0.0;
-					for (std::size_t index = span.first_memory; index <= span.last_memory && index < memory.size(); ++index) {
-						if (options.scope != SanaeSearchScope::Russian)
-							constituent_best = std::max(constituent_best, SanaeSearchPhraseScore(options.query, memory[index].source));
-						if (options.scope != SanaeSearchScope::English)
-							constituent_best = std::max(constituent_best, SanaeSearchPhraseScore(options.query, memory[index].russian));
+
+				auto search_source = SanaeNormalizeSearchText(source);
+				auto search_russian = SanaeNormalizeSearchText(russian);
+				auto constituent_exact = [&](bool english) {
+					for (std::size_t i = first; i <= last; ++i) {
+						auto const& text = english
+							? project_search_memory[i].search_source
+							: project_search_memory[i].search_russian;
+						if (text.find(normalized) != std::string::npos) return true;
 					}
-					if (constituent_best >= score) score = 0.0;
+					return false;
+				};
+
+				bool english_exact = options.scope != SanaeSearchScope::Russian
+					&& search_source.find(normalized) != std::string::npos
+					&& !constituent_exact(true);
+				bool russian_exact = options.scope != SanaeSearchScope::English
+					&& search_russian.find(normalized) != std::string::npos
+					&& !constituent_exact(false);
+				double score = (english_exact || russian_exact) ? 1.0 : 0.0;
+
+				if (score == 0.0 && options.fuzzy_word_forms) {
+					if (options.scope != SanaeSearchScope::Russian)
+						score = std::max(score, fuzzy_score(source));
+					if (options.scope != SanaeSearchScope::English)
+						score = std::max(score, fuzzy_score(russian));
+					if (score > 0.0) {
+						double constituent_best = 0.0;
+						for (std::size_t i = first; i <= last; ++i) {
+							if (options.scope != SanaeSearchScope::Russian)
+								constituent_best = std::max(constituent_best,
+									fuzzy_score(project_search_memory[i].source));
+							if (options.scope != SanaeSearchScope::English)
+								constituent_best = std::max(constituent_best,
+									fuzzy_score(project_search_memory[i].russian));
+						}
+						if (constituent_best >= score) score = 0.0;
+					}
 				}
-			}
-			if (score > 0.0) {
-				SanaeRepeatMatch match{SanaeRepeatKind::Span, score, span.source, span.russian,
-					span.episode_code, span.start, span.end};
-				match.source_span_lines = span.line_count;
-				result.push_back(std::move(match));
+
+				if (score > 0.0) {
+					SanaeRepeatMatch match{SanaeRepeatKind::Span, score, source, russian,
+						project_search_memory[first].episode_code,
+						project_search_memory[first].start, current.end};
+					match.source_span_lines = static_cast<int>(last - first + 1);
+					result.push_back(std::move(match));
+				}
 			}
 		}
 	}
 
-	// The synchronized memory intentionally excludes the open episode from
-	// repeat history. Project search, however, is expected to search that open
-	// working ASS too, including phrases crossing 2–3 adjacent subtitle lines.
+	// The open episode is searched from the live working ASS, not from a
+	// finalized server copy. This prevents stale results and keeps repeat memory
+	// free of self-matches.
 	if (HasOpenEpisode()) {
 		auto active = ActiveEpisode();
-		if (active && (options.episode_code.empty() || options.episode_code == active->episode_code)) {
+		if (active && accepts_episode_code(active->episode_code)) {
 			struct OpenSearchEntry {
 				std::string source;
 				std::string russian;
+				std::string normalized_source;
+				std::string normalized_russian;
 				std::string search_source;
 				std::string search_russian;
 				int start = 0;
 				int end = 0;
 			};
 			std::vector<OpenSearchEntry> open;
+			open.reserve(context->ass->Events.size());
+
 			for (auto const& line : context->ass->Events) {
 				if (line.Comment || has_drawing(line)) continue;
-				auto source = context->translationProject->SourceDisplayTextCached(&line);
+				auto source = context->translationProject->SourceText(&line, " ");
+				if (source.empty())
+					source = context->translationProject->SourceDisplayTextCached(&line);
 				auto russian = visible_text(line);
-				if (SanaeNormalizeSource(source).empty() && SanaeNormalizeSource(russian).empty()) continue;
-				auto search_source = SanaeNormalizeSearchText(source);
-				auto search_russian = SanaeNormalizeSearchText(russian);
-				open.push_back({std::move(source), std::move(russian),
-					std::move(search_source), std::move(search_russian),
-					static_cast<int>(line.Start), static_cast<int>(line.End)});
-				auto const& entry = open.back();
+				if (SanaeNormalizeSource(source).empty()
+					&& SanaeNormalizeSource(russian).empty()) continue;
+
+				OpenSearchEntry entry;
+				entry.source = std::move(source);
+				entry.russian = std::move(russian);
+				entry.normalized_source = SanaeNormalizeRepeatSource(entry.source);
+				entry.normalized_russian = SanaeNormalizeSource(entry.russian);
+				entry.search_source = SanaeNormalizeSearchText(entry.source);
+				entry.search_russian = SanaeNormalizeSearchText(entry.russian);
+				entry.start = static_cast<int>(line.Start);
+				entry.end = static_cast<int>(line.End);
+				open.push_back(std::move(entry));
+
+				auto const& value = open.back();
 				bool english_exact = options.scope != SanaeSearchScope::Russian
-					&& entry.search_source.find(normalized) != std::string::npos;
+					&& (value.normalized_source == source_key
+						|| value.search_source.find(normalized) != std::string::npos);
 				bool russian_exact = options.scope != SanaeSearchScope::English
-					&& entry.search_russian.find(normalized) != std::string::npos;
-				SanaeRepeatKind kind = SanaeRepeatKind::None;
-				double score = 1.0;
-				if (english_exact || russian_exact) kind = SanaeRepeatKind::Exact;
-				else {
-					double fuzzy = 0.0;
-					if (options.scope != SanaeSearchScope::Russian) fuzzy = std::max(fuzzy, fuzzy_score(entry.source));
-					if (options.scope != SanaeSearchScope::English) fuzzy = std::max(fuzzy, fuzzy_score(entry.russian));
-					if (fuzzy > 0.0) { kind = SanaeRepeatKind::Similar; score = fuzzy; }
+					&& (value.normalized_russian == russian_key
+						|| value.search_russian.find(normalized) != std::string::npos);
+				if (english_exact || russian_exact) {
+					result.push_back({SanaeRepeatKind::Exact, 1.0, value.source, value.russian,
+						active->episode_code, value.start, value.end});
+					continue;
 				}
-				if (kind != SanaeRepeatKind::None)
-					result.push_back({kind, score, entry.source, entry.russian,
-						active->episode_code, entry.start, entry.end});
+
+				double fuzzy = 0.0;
+				if (options.scope != SanaeSearchScope::Russian)
+					fuzzy = std::max(fuzzy, fuzzy_score(value.source));
+				if (options.scope != SanaeSearchScope::English)
+					fuzzy = std::max(fuzzy, fuzzy_score(value.russian));
+				if (fuzzy > 0.0)
+					result.push_back({SanaeRepeatKind::Similar, fuzzy, value.source, value.russian,
+						active->episode_code, value.start, value.end});
 			}
 
 			if (query_tokens.size() >= 2) {
@@ -2543,7 +2594,8 @@ std::vector<SanaeRepeatMatch> SanaeProjectManager::SearchMemory(SanaeSearchOptio
 					std::string source = open[first].source;
 					std::string russian = open[first].russian;
 					for (std::size_t last = first + 1; last < open.size() && last < first + 3; ++last) {
-						if (open[last].start < open[last - 1].start || open[last].start - open[last - 1].end > 4500) break;
+						if (open[last].start < open[last - 1].start
+							|| open[last].start - open[last - 1].end > 4500) break;
 						source += "\n" + open[last].source;
 						if (!open[last].russian.empty()) {
 							if (!russian.empty()) russian.push_back('\n');
@@ -2559,13 +2611,17 @@ std::vector<SanaeRepeatMatch> SanaeProjectManager::SearchMemory(SanaeSearchOptio
 							return false;
 						};
 						bool english_exact = options.scope != SanaeSearchScope::Russian
-							&& search_source.find(normalized) != std::string::npos && !constituent_exact(true);
+							&& search_source.find(normalized) != std::string::npos
+							&& !constituent_exact(true);
 						bool russian_exact = options.scope != SanaeSearchScope::English
-							&& search_russian.find(normalized) != std::string::npos && !constituent_exact(false);
+							&& search_russian.find(normalized) != std::string::npos
+							&& !constituent_exact(false);
 						double score = (english_exact || russian_exact) ? 1.0 : 0.0;
 						if (score == 0.0 && options.fuzzy_word_forms) {
-							if (options.scope != SanaeSearchScope::Russian) score = std::max(score, fuzzy_score(source));
-							if (options.scope != SanaeSearchScope::English) score = std::max(score, fuzzy_score(russian));
+							if (options.scope != SanaeSearchScope::Russian)
+								score = std::max(score, fuzzy_score(source));
+							if (options.scope != SanaeSearchScope::English)
+								score = std::max(score, fuzzy_score(russian));
 							if (score > 0.0) {
 								double constituent_best = 0.0;
 								for (std::size_t i = first; i <= last; ++i) {
@@ -2588,6 +2644,7 @@ std::vector<SanaeRepeatMatch> SanaeProjectManager::SearchMemory(SanaeSearchOptio
 			}
 		}
 	}
+
 	std::stable_sort(result.begin(), result.end(), [](auto const& left, auto const& right) {
 		auto priority = [](SanaeRepeatKind kind) {
 			return kind == SanaeRepeatKind::Exact ? 3
