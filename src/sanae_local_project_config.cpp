@@ -21,7 +21,7 @@ SanaeLocalProjectConfig::SanaeLocalProjectConfig() {
 void SanaeLocalProjectConfig::Load(const std::string& project_id) {
     if (project_id.empty()) return;
 
-    auto base = agi::Path().User / "sanae" / "local-config";
+    auto base = agi::Path().Decode("?user/sanae/local-config");
     agi::fs::CreateDirectory(base);
     auto path = base / (project_id + ".json");
 
@@ -31,10 +31,10 @@ void SanaeLocalProjectConfig::Load(const std::string& project_id) {
     }
 
     try {
-        auto content = agi::io::Open(path)->Get();
+        auto content = agi::io::Open(path);
         std::string line;
         std::string json_text;
-        while (std::getline(content, line))
+        while (std::getline(*content, line))
             json_text += line;
 
         // Minimal JSON parsing for QCProfile preset.
@@ -59,7 +59,7 @@ void SanaeLocalProjectConfig::Load(const std::string& project_id) {
 void SanaeLocalProjectConfig::Save(const std::string& project_id) const {
     if (project_id.empty()) return;
 
-    auto base = agi::Path().User / "sanae" / "local-config";
+    auto base = agi::Path().Decode("?user/sanae/local-config");
     agi::fs::CreateDirectory(base);
     auto path = base / (project_id + ".json");
 

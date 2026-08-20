@@ -15,6 +15,10 @@
 
 namespace sanae {
 
+int to_centiseconds(const agi::Time& t) {
+    return static_cast<int>(t) / 10;
+}
+
 std::string compute_text_hash(const std::string& visible_text) {
     // Contract: caller passes already-stripped visible text (no override blocks).
     // In production, use AssDialogue::GetStrippedText().

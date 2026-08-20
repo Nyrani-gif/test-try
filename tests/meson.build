@@ -76,6 +76,7 @@ tests_src = [
 ]
 
 tests_inc = include_directories('support')
+src_inc = include_directories('../src')
 
 tests_args = []
 
@@ -89,7 +90,7 @@ endif
 runner = executable(
     'gtest-main',
     tests_src,
-    include_directories: [tests_inc, libaegisub_inc],
+    include_directories: [tests_inc, src_inc, libaegisub_inc],
     dependencies: [tests_deps, deps],
     cpp_args: tests_args + conf_defines,
     link_with: libaegisub,

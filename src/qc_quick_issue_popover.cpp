@@ -20,6 +20,8 @@
 #include <wx/panel.h>
 #include <wx/choice.h>
 
+#include <cstdlib>
+#include <ctime>
 #include <sstream>
 #include <iomanip>
 
@@ -30,7 +32,7 @@ struct QuickIssuePopover::Impl {
     wxChoice *severity_choice;
     wxTextCtrl *body_input;
 
-    Impl(wxWindow *parent, agi::Context *c, AssDialogue *l)
+    Impl(wxPopupTransientWindow *parent, agi::Context *c, AssDialogue *l)
         : context(c), line(l) {
 
         auto panel = new wxPanel(parent);
@@ -119,8 +121,7 @@ QuickIssuePopover::QuickIssuePopover(wxWindow *parent, agi::Context *context, As
 , impl(std::make_unique<Impl>(this, context, line)) {
     // Position near the active line in the grid.
     if (line) {
-        auto pos = parent->GetScreenPosition();
-        Position(pos + wxPoint(50, 50));
+        Position(parent->GetScreenPosition(), parent->GetSize());
     }
 }
 

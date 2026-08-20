@@ -13,8 +13,6 @@
 #include "selection_controller.h"
 #include "video_controller.h"
 
-#include <libaegisub/log.h>
-
 #include <wx/sizer.h>
 #include <wx/stattext.h>
 #include <wx/checkbox.h>

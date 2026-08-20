@@ -30,7 +30,7 @@ struct TerminologyEntryPopover::Impl {
     wxTextCtrl *russian;
     wxTextCtrl *note;
 
-    Impl(wxWindow *parent, agi::Context *c)
+    Impl(wxPopupTransientWindow *parent, agi::Context *c)
         : context(c), manager(*c->sanaeProject) {
 
         auto panel = new wxPanel(parent);
@@ -129,7 +129,5 @@ TerminologyEntryPopover::~TerminologyEntryPopover() = default;
 
 void TerminologyEntryPopover::PositionNearEditCtrl(wxWindow *parent, SubsTextEditCtrl *edit_ctrl) {
     if (!edit_ctrl) return;
-    auto pos = edit_ctrl->GetScreenPosition();
-    auto size = edit_ctrl->GetSize();
-    Position(pos + wxPoint(size.GetWidth() / 2, size.GetHeight()));
+    Position(edit_ctrl->GetScreenPosition(), edit_ctrl->GetSize());
 }

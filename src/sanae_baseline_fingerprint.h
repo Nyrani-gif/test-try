@@ -68,6 +68,6 @@ std::string compute_timing_hash(const AssDialogue& line);
 //   to_centiseconds = 10210 / 10 = 1021 (cs)
 //
 // This matches the server contract §9.2 which requires centiseconds.
-inline int to_centiseconds(agi::Time t) { return static_cast<int>(t) / 10; }
+int to_centiseconds(const agi::Time& t);
 
 } // namespace sanae

@@ -5,6 +5,7 @@
 
 #include "ass_dialogue.h"
 #include "sanae_baseline_fingerprint.h"
+#include "sanae_recovery.h"
 #include "sanae_text.h"
 
 #include <algorithm>

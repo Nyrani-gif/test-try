@@ -13,7 +13,6 @@
 
 #include <wx/event.h>
 #include <wx/window.h>
-#include <wx/focus.h>
 
 namespace sanae {
 

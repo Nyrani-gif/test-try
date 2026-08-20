@@ -52,6 +52,7 @@
 #include "subs_edit_ctrl.h"
 #include "text_selection_controller.h"
 #include "timeedit_ctrl.h"
+#include "translation_project.h"
 #include "utils.h"
 #include "validators.h"
 

@@ -21,7 +21,6 @@
 #include <string>
 
 #include <libaegisub/log.h>
-#include <libaegisub/option_value.h>
 
 #include "options.h"
 
