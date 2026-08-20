@@ -29,8 +29,12 @@
 
 #include <libaegisub/signal.h>
 
+#include "workspace_mode.h"
+#include "qc_issue_dock.h"
+
 #include <memory>
 #include <wx/frame.h>
+#include <wx/splitter.h>
 #include <wx/timer.h>
 
 class AegisubApp;
@@ -41,9 +45,9 @@ namespace agi { class AudioProvider; }
 namespace agi { struct Context; class OptionValue; }
 
 class FrameMain : public wxFrame, private agi::signal::ConnectionScope {
-	friend class AegisubApp;
+        friend class AegisubApp;
 
-	std::unique_ptr<agi::Context> context;
+        std::unique_ptr<agi::Context> context;
 
     // XXX: Make Freeze()/Thaw() noops on GTK, this seems to be buggy
 #ifdef __WXGTK__
@@ -51,50 +55,76 @@ class FrameMain : public wxFrame, private agi::signal::ConnectionScope {
     void Thaw(void) {}
 #endif
 
-	bool showVideo = true; ///< Is the video display shown?
-	bool showAudio = true; ///< Is the audio display shown?
-	wxTimer StatusClear;   ///< Status bar timeout timer
+        bool showVideo = true; ///< Is the video display shown?
+        bool showAudio = true; ///< Is the audio display shown?
+        wxTimer StatusClear;   ///< Status bar timeout timer
 
-	void InitContents();
+        void InitContents();
 
-	void UpdateTitle();
+        void UpdateTitle();
 
-	void OnKeyDown(wxKeyEvent &event);
-	void OnMouseWheel(wxMouseEvent &evt);
+        void OnKeyDown(wxKeyEvent &event);
+        void OnMouseWheel(wxMouseEvent &evt);
 
-	void OnStatusClear(wxTimerEvent &event);
-	void OnCloseWindow (wxCloseEvent &event);
+        void OnStatusClear(wxTimerEvent &event);
+        void OnCloseWindow (wxCloseEvent &event);
 
-	void OnAudioOpen(agi::AudioProvider *provider);
-	void OnVideoOpen(AsyncVideoProvider *provider);
-	void OnVideoDetach(agi::OptionValue const& opt);
-	void OnSubtitlesOpen();
+        void OnAudioOpen(agi::AudioProvider *provider);
+        void OnVideoOpen(AsyncVideoProvider *provider);
+        void OnVideoDetach(agi::OptionValue const& opt);
+        void OnSubtitlesOpen();
 
-	void EnableToolBar(agi::OptionValue const& opt);
+        void EnableToolBar(agi::OptionValue const& opt);
 
-	AudioBox *audioBox;      ///< The audio area
-	VideoBox *videoBox;      ///< The video area
+        AudioBox *audioBox;      ///< The audio area
+        VideoBox *videoBox;      ///< The video area
+        QCIssueDock *qc_dock;    ///< Phase 4: non-modal QC issues panel
+        wxSplitterWindow *TopSplitter; ///< Phase 4: flexible video/tools split
 
-	wxSizer *MainSizer;  ///< Arranges things from top to bottom in the window
-	wxSizer *TopSizer;   ///< Arranges video box and tool box from left to right
-	wxSizer *ToolsSizer; ///< Arranges audio and editing areas top to bottom
+        wxSizer *MainSizer;  ///< Arranges things from top to bottom in the window
+        wxSizer *TopSizer;   ///< Legacy: kept for compatibility (unused after splitter)
+        wxSizer *ToolsSizer; ///< Arranges audio and editing areas top to bottom
+
+        // Phase 4: Workspace mode state.
+        // Single source of truth for runtime WorkspaceMode.
+        // Sanae/Workspace/CurrentMode is persistence only — all runtime
+        // consumers read from this field via GetWorkspaceMode().
+        sanae::WorkspaceMode workspace_mode = sanae::WorkspaceMode::Translation;
+        sanae::WorkspaceMode pre_focus_mode = sanae::WorkspaceMode::Translation;
+        bool focus_mode_active = false;
+        bool pre_focus_show_toolbar = true;
 
 public:
-	FrameMain();
-	~FrameMain();
+        FrameMain();
+        ~FrameMain();
 
-	/// Set the status bar text
-	/// @param text New status bar text
-	/// @param ms Time in milliseconds that the message should be visible
-	void StatusTimeout(wxString text,int ms=10000);
+        /// Set the workspace mode (Translation/QC/Advanced).
+        /// Preserves active line, selection, edit state, video position.
+        /// Does not mutate ASS content.
+        void SetWorkspaceMode(sanae::WorkspaceMode mode);
 
-	/// @brief Set the video and audio display visibility
-	/// @param video -1: leave unchanged; 0: hide; 1: show
-	/// @param audio -1: leave unchanged; 0: hide; 1: show
-	void SetDisplayMode(int video, int audio);
+        /// Get the current workspace mode (single source of truth).
+        sanae::WorkspaceMode GetWorkspaceMode() const { return workspace_mode; }
 
-	bool IsVideoShown() const { return showVideo; }
-	bool IsAudioShown() const { return showAudio; }
+        /// Toggle Focus Mode. Saves current mode, hides visual noise.
+        /// Restores exact previous mode on exit.
+        void ToggleFocusMode();
 
-	DECLARE_EVENT_TABLE()
+        /// Check if Focus Mode is currently active.
+        bool IsFocusModeActive() const { return focus_mode_active; }
+
+        /// Set the status bar text
+        /// @param text New status bar text
+        /// @param ms Time in milliseconds that the message should be visible
+        void StatusTimeout(wxString text,int ms=10000);
+
+        /// @brief Set the video and audio display visibility
+        /// @param video -1: leave unchanged; 0: hide; 1: show
+        /// @param audio -1: leave unchanged; 0: hide; 1: show
+        void SetDisplayMode(int video, int audio);
+
+        bool IsVideoShown() const { return showVideo; }
+        bool IsAudioShown() const { return showAudio; }
+
+        DECLARE_EVENT_TABLE()
 };

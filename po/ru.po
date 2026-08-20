@@ -6174,6 +6174,30 @@ msgstr "Текущая серия:"
 msgid "Project:"
 msgstr "Проект:"
 
+#: ../src/sanae_project.cpp:2942
+#, c-format
+msgid "Accepted: %s. In this line: %s."
+msgstr "Принято: %s. В этой строке: %s."
+
+#: ../src/sanae_project.cpp:2947
+#, c-format
+msgid "Current episode: %s."
+msgstr "Текущая серия: %s."
+
+#: ../src/sanae_project.cpp:2950
+#, c-format
+msgid "Project: %s."
+msgstr "Проект: %s."
+
+#: ../src/terminology_hint_panel.cpp:137
+#, c-format
+msgid "Terms (%d):"
+msgstr "Термины (%d):"
+
+#: ../src/terminology_hint_panel.cpp:146
+msgid "Apply"
+msgstr "Применить"
+
 #: ../src/dialog_sanae_final_review.cpp:117
 msgid "Select a candidate to see occurrences in this and previous episodes."
 msgstr ""
@@ -6871,22 +6895,18 @@ msgstr ""
 "версии."
 
 #: ../src/dialog_sanae_terminology.cpp:110
-#, fuzzy
-#| msgid "Select a candidate to see occurrences in this and previous episodes."
 msgid "Select a candidate to see aligned project examples."
 msgstr ""
-"Выберите кандидата, чтобы увидеть его контекст в текущем и прошлых эпизодах."
+"Выберите кандидата, чтобы увидеть выровненные примеры из проекта."
 
 #: ../src/dialog_sanae_terminology.cpp:115
-#, fuzzy, c-format
-#| msgid ""
-#| "In this episode: %d\n"
-#| "In previous episodes: %d"
+#, c-format
 msgid ""
 "Episodes: %d\n"
 "In the current episode: %d\n"
 "In previous episodes: %d"
 msgstr ""
+"Серий: %d\n"
 "В текущем эпизоде: %d\n"
 "В прошлых эпизодах: %d"
 
@@ -6909,16 +6929,12 @@ msgid "Episodes"
 msgstr "Серий"
 
 #: ../src/dialog_sanae_terminology.cpp:168
-#, fuzzy
-#| msgid "Preferences"
 msgid "Occurrences"
-msgstr "Настройки"
+msgstr "Вхождения"
 
 #: ../src/dialog_sanae_terminology.cpp:174
-#, fuzzy
-#| msgid "Add to project terminology…"
 msgid "Add to terminology…"
-msgstr "Добавить в терминологию проекта…"
+msgstr "Добавить в терминологию…"
 
 #: ../src/dialog_sanae_terminology.cpp:175 ../src/preferences.cpp:500
 msgid "Ignore"
@@ -6982,10 +6998,8 @@ msgid "Add term…"
 msgstr "Добавить термин…"
 
 #: ../src/dialog_sanae_terminology.cpp:418
-#, fuzzy
-#| msgid "Add term…"
 msgid "Find new terms…"
-msgstr "Добавить термин…"
+msgstr "Найти новые термины…"
 
 #: ../src/dialog_sanae_terminology.cpp:419
 msgid "Edit…"

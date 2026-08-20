@@ -1,0 +1,17 @@
+ po/ru.po                          |   46 +-
+ src/base_grid.cpp                 | 1439 +++++-----
+ src/command/sanae.cpp             |  717 ++---
+ src/dialog_sanae_final_review.cpp | 1545 +++++-----
+ src/dialog_sanae_terminology.cpp  |  849 +++---
+ src/frame_main.cpp                |  498 ++--
+ src/frame_main.h                  |   98 +-
+ src/libresrc/default_config.json  | 1342 ++++-----
+ src/libresrc/default_hotkey.json  |  773 ++---
+ src/meson.build                   |   51 +-
+ src/sanae_project.cpp             | 5632 +++++++++++++++++++------------------
+ src/subs_edit_box.cpp             |  858 +++---
+ src/subs_edit_box.h               |  286 +-
+ src/translation_project.cpp       | 1970 +++++++------
+ src/translation_project.h         |  380 +--
+ tests/meson.build                 |   31 +-
+ 16 files changed, 8447 insertions(+), 8068 deletions(-)

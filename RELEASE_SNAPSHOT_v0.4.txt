@@ -1,0 +1,35 @@
+Aegisub Sanae v0.4 Source Snapshot
+===================================
+
+Date: 2026-08-20T19:12:41Z
+Git branch: main
+Base HEAD commit: 2bede02ab5089ce8868feb9b1860395ca5c8136c
+
+This archive contains the COMPLETE current working tree of the
+aegisubsanae repository, including:
+- all tracked files in their CURRENT working-tree state (with modifications)
+- all new/untracked implementation files (Phase 0-4)
+- tests, po/localization changes, config/hotkey changes
+- IMPLEMENTATION_STATUS.md, BUILD_AND_SMOKE_TEST_CHECKLIST.md
+- HOTKEY_AUDIT.md, LINE_REF_SPIKE.md
+- SANAE_REVAMP_PLAN.md, SANAE_SERVER_REQUIREMENTS_v0.3.md
+
+Phase Status:
+  Phase 0: COMPLETE
+  Phase 1: COMPLETE
+  Phase 2: COMPLETE
+  Phase 3: COMPLETE
+  Phase 4: COMPLETE
+  Phase 5: BLOCKED on executable profiling environment
+  Phase 6: BLOCKED on production line_ref + server implementation
+
+Sanae/ServerReviewSync = OFF
+FULL BUILD / GUI SMOKE VERIFICATION = ENVIRONMENTAL PENDING
+
+Total tests: 116 across 8 test files.
+Total changed files: 76 (60 new, 16 modified).
+
+WARNING: This is a SOURCE SNAPSHOT, not a verified binary release.
+The code has been integrated against real Aegisub source types but
+has NOT been compiled or tested in an executable environment.
+See BUILD_AND_SMOKE_TEST_CHECKLIST.md for verification plan.
