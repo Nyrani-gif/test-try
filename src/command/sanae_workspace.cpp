@@ -17,7 +17,6 @@
 #include "../sanae_ux_metrics.h"
 #include "../workspace_mode.h"
 
-#include <libaegisub/log.h>
 
 namespace {
 using cmd::Command;

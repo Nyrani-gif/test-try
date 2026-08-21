@@ -48,7 +48,7 @@ TEST(sanae_local_line_id, exact_match_on_reload) {
     };
     reg.Realign(current);
 
-    EXPECT_EQ("li_000001", reg.LookupByDialogue(nullptr));
+    EXPECT_EQ("li_000001", reg.LookupByDialogueId(101));
     // After realign, dialogue_id should be updated
     auto const& entries = reg.Entries();
     EXPECT_EQ(101, entries[0].dialogue_id);

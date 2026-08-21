@@ -67,7 +67,7 @@ struct sanae_episode_submit_for_qc final : public Command {
             // Check each line for blocking Error Diagnostics.
             AssDialogue *prev = nullptr;
             for (auto& line : c->ass->Events) {
-                auto diags = sanae::ComputeDiagnostics(&line, prev, profile, c->translationProject);
+                auto diags = sanae::ComputeDiagnostics(&line, prev, profile, c->translationProject.get());
                 if (sanae::HasBlockingDiagnostic(diags)) {
                     ++blocking_count;
                     if (blocking_count <= 5) {
