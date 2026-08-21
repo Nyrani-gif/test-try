@@ -68,7 +68,6 @@ tests_src = [
         '../src/sanae_terminology_index.cpp',
         '../src/sanae_local_line_id.cpp',
         '../src/sanae_review_issue.cpp',
-        '../src/sanae_issue_registry.cpp',
         '../src/sanae_qc_profile.cpp',
         '../src/sanae_qc_checks.cpp',
         '../src/sanae_modified_after_issue.cpp',
