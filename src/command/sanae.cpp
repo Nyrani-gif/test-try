@@ -17,7 +17,6 @@
 #include "../text_selection_controller.h"
 #include "../translation_project.h"
 
-// Phase 4: workspace/QC/terminology command definitions.
 #include "command.h"
 
 #include <libaegisub/ass/time.h>
@@ -465,7 +464,7 @@ void init_sanae() {
         // Phase 4: workspace, QC, and terminology commands.
         // Registered from sanae_workspace.cpp and episode_workflow.cpp.
         // All use standard CommandManager registration → user-reconfigurable.
-        cmd::register_sanae_workspace();
-        cmd::register_sanae_episode_workflow();
+        register_sanae_workspace();
+        register_sanae_episode_workflow();
 }
 }

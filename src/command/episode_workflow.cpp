@@ -6,6 +6,9 @@
 // Phase 6 will connect to server review-transition endpoint.
 //
 // BLOCKING SEMANTICS (authoritative):
+#include "../ass_dialogue.h"
+#include "../ass_file.h"
+#include "../compat.h"
 //   Info Diagnostic: never blocks Submit.
 //   Warning Diagnostic: never blocks Submit.
 //   Error Diagnostic: blocks Submit when configured as blocking by QCProfile.
@@ -19,6 +22,7 @@
 
 #include "../include/aegisub/context.h"
 #include "../options.h"
+using cmd::Command;
 #include "../sanae_project.h"
 #include "../sanae_ux_metrics.h"
 #include "../sanae_qc_checks.h"

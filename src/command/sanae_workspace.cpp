@@ -17,9 +17,10 @@
 #include "../sanae_ux_metrics.h"
 #include "../workspace_mode.h"
 
-#include <wx/log.h>
+#include <libaegisub/log.h>
 
 namespace {
+using cmd::Command;
 using agi::Context;
 
 // === Workspace mode commands ===

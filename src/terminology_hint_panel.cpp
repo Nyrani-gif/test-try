@@ -11,6 +11,8 @@
 #include "sanae_text.h"
 #include "sanae_ux_metrics.h"
 #include "subs_edit_box.h"
+#include "subs_edit_ctrl.h"
+#include "compat.h"
 #include "translation_project.h"
 
 #include <libaegisub/signal.h>
@@ -24,6 +26,7 @@
 #include <algorithm>
 
 struct TerminologyHintPanel::Impl {
+    TerminologyHintPanel *owner;  // the actual wxPanel
     agi::Context *context;
     SubsTextEditCtrl *edit_ctrl;
     SanaeProjectManager& manager;
@@ -43,11 +46,11 @@ struct TerminologyHintPanel::Impl {
     // Signal connections
     std::vector<agi::signal::Connection> connections;
 
-    Impl(wxWindow *parent, agi::Context *c, SubsTextEditCtrl *e)
-        : context(c), edit_ctrl(e), manager(*c->sanaeProject) {
+    Impl(TerminologyHintPanel *panel, agi::Context *c, SubsTextEditCtrl *e)
+        : owner(panel), context(c), edit_ctrl(e), manager(*c->sanaeProject) {
 
         main_sizer = new wxBoxSizer(wxVERTICAL);
-        header = new wxStaticText(parent, -1, "");
+        header = new wxStaticText(owner, -1, "");
         main_sizer->Add(header, 0, wxBOTTOM, 4);
 
         term_grid = new wxFlexGridSizer(2, 4, 4);
@@ -187,7 +190,7 @@ struct TerminologyHintPanel::Impl {
 
         if (cached_matches.empty()) {
             header->SetLabel("");
-            Hide();
+            owner->Hide();
             sanae::ux::line_context_hidden();
             return;
         }
@@ -211,20 +214,20 @@ struct TerminologyHintPanel::Impl {
             if (m.usage == sanae::TerminologyUsage::CorrectlyUsed)
                 label = "✓ " + label;
 
-            auto *term_label = new wxStaticText(this, -1, label);
+            auto *term_label = new wxStaticText(owner, -1, label);
             term_grid->Add(term_label, 1, wxALIGN_CENTER_VERTICAL);
 
             // Right: apply button (click-to-apply, no hotkey)
-            auto *apply_btn = new wxButton(this, -1, _("Apply"));
+            auto *apply_btn = new wxButton(owner, -1, _("Apply"));
             apply_btn->Bind(wxEVT_BUTTON, [this, i](wxCommandEvent&) {
                 ApplyTerm(i);
             });
             term_grid->Add(apply_btn, 0, wxALIGN_CENTER_VERTICAL);
         }
 
-        Show();
+        owner->Show();
         sanae::ux::line_context_shown();
-        Layout();
+        owner->Layout();
     }
 };
 

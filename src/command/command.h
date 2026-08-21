@@ -166,4 +166,7 @@ DEFINE_EXCEPTION(CommandNotFound, CommandError);
 
 	/// Unregister and deletes all commands
 	void clear();
+	/// Phase 4: Register workspace/QC/terminology commands.
+	void register_sanae_workspace();
+	void register_sanae_episode_workflow();
 } // namespace cmd
