@@ -636,9 +636,10 @@
                 "Profiling" : {
                         "Enabled" : false
                 },
-                "InlineTerminology" : false,
-                "UnifiedProblemsList" : false,
-                "WorkspaceModes" : false,
+                "InlineTerminology" : true,
+                "UnifiedProblemsList" : true,
+                "WorkspaceModes" : true,
+                "RevampDefaultsApplied" : false,
                 "ServerReviewSync" : false,
                 "Workspace" : {
                         "CurrentMode" : 0,

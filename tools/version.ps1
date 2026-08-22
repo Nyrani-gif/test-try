@@ -57,15 +57,15 @@ $gitVersionString = $gitRevision, $gitBranch, $gitHash -join '-'
 $exactGitTag = git -C $repositoryRootPath describe --exact-match --tags 2>$null
 
 $version['TAGGED_RELEASE'] = $false
-$version['RESOURCE_BASE_VERSION'] = @(3, 5, 3)
-$version['INSTALLER_VERSION'] = '3.5.3'
+$version['RESOURCE_BASE_VERSION'] = @(3, 5, 4)
+$version['INSTALLER_VERSION'] = '3.5.4'
 # Keep this script ASCII-only: Windows PowerShell 5.1 reads UTF-8 without a
 # BOM as an ANSI code page and can misparse a literal em dash as a quote.
 $emDash = [char]0x2014
-$version['SANAE_VERSION_STRING'] = 'sanae-v0.3 (beta)'
-$version['SANAE_PRODUCT_STRING'] = "Sanae $emDash Aegisub v0.3 (beta)"
-$version['SANAE_RELEASE_TAG'] = 'sanae-beta-03'
-$version['SANAE_BETA_NUMBER'] = 3
+$version['SANAE_VERSION_STRING'] = 'sanae-v0.4 (beta)'
+$version['SANAE_PRODUCT_STRING'] = "Sanae $emDash Aegisub v0.4 (beta)"
+$version['SANAE_RELEASE_TAG'] = 'sanae-beta-04'
+$version['SANAE_BETA_NUMBER'] = 4
 
 if ($exactGitTag -match $sanaeBetaMatch) {
   $betaNumber = [int]$Matches[1]

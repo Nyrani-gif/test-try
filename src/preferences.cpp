@@ -313,6 +313,11 @@ void Sanae(wxTreebook *book, Preferences *parent) {
 	p->OptionAdd(repeats, _("Highlight ENSUB source repeats"), "Sanae/Project/Source Repeat/Enabled");
 	p->OptionAdd(repeats, _("Similar-match threshold"), "Sanae/Project/Source Repeat/Similar Threshold",
 		{.min = 0.80, .max = 1.0, .inc = 0.01});
+
+	auto revamp = p->PageSizer(_("Revamp UI"));
+	p->OptionAdd(revamp, _("Enable workspace modes (Translation / QC / Advanced)"), "Sanae/WorkspaceModes");
+	p->OptionAdd(revamp, _("Enable unified QC problems list"), "Sanae/UnifiedProblemsList");
+	p->OptionAdd(revamp, _("Enable inline terminology and line context"), "Sanae/InlineTerminology");
 	p->SetSizerAndFit(p->sizer);
 }
 

@@ -148,6 +148,18 @@ FrameMain::FrameMain()
         SetIcon(icon);
 #endif
 
+        // buildfix6: the revamp flags existed in previous test builds but were
+        // defaulted to false and had no Preferences UI. Existing user configs
+        // therefore keep the revamp disabled forever unless edited by hand.
+        // Enable the Phase 2-4 client UI once for profiles which predate this
+        // migration; after the sentinel is written, user choices are respected.
+        if (!OPT_GET("Sanae/RevampDefaultsApplied")->GetBool()) {
+                OPT_SET("Sanae/InlineTerminology")->SetBool(true);
+                OPT_SET("Sanae/UnifiedProblemsList")->SetBool(true);
+                OPT_SET("Sanae/WorkspaceModes")->SetBool(true);
+                OPT_SET("Sanae/RevampDefaultsApplied")->SetBool(true);
+        }
+
         StartupLog("Create views and inner main window controls");
         InitContents();
         BindConnection(OPT_SUB("Video/Detached/Enabled", &FrameMain::OnVideoDetach, this));
@@ -163,18 +175,16 @@ FrameMain::FrameMain()
         Show();
         SetDisplayMode(1, 1);
 
-        // Phase 4: Restore persisted workspace mode.
-        // Config stores integer; runtime uses WorkspaceMode enum.
-        // Invalid values default to Translation (safe).
-        // Only restore if WorkspaceModes feature flag is enabled.
+        // Phase 4: restore and APPLY the persisted workspace mode.
+        // Previous builds only assigned workspace_mode here, so the actual
+        // visibility preset was never applied on startup.
         if (OPT_GET("Sanae/WorkspaceModes")->GetBool()) {
                 int saved_mode = OPT_GET("Sanae/Workspace/CurrentMode")->GetInt();
-                if (saved_mode >= 0 && saved_mode <= 2)
-                        workspace_mode = static_cast<sanae::WorkspaceMode>(saved_mode);
-                else
-                        workspace_mode = sanae::WorkspaceMode::Translation;
+                auto desired_mode = (saved_mode >= 0 && saved_mode <= 2)
+                        ? static_cast<sanae::WorkspaceMode>(saved_mode)
+                        : sanae::WorkspaceMode::Translation;
+                SetWorkspaceMode(desired_mode);
         } else {
-                // Feature flag OFF: stay in Translation (legacy-compatible).
                 workspace_mode = sanae::WorkspaceMode::Translation;
         }
 
@@ -209,62 +219,81 @@ void FrameMain::InitContents() {
         StartupLog("Create subtitles grid");
         context->subsGrid = new BaseGrid(Panel, context.get());
 
-        StartupLog("Create video box");
-        videoBox = new VideoBox(Panel, false, context.get());
+        const bool workspace_modes = OPT_GET("Sanae/WorkspaceModes")->GetBool();
 
-        StartupLog("Create audio box");
-        context->audioBox = audioBox = new AudioBox(Panel, context.get());
+        // buildfix6: keep a real legacy hierarchy when workspace modes are off,
+        // and a correct splitter ownership hierarchy when they are on.
+        // A wxSizer must manage windows owned by its containing window. The old
+        // revamp code created AudioBox/SubsEditBox as Panel children and then
+        // attached their sizer to a different child panel, which causes the
+        // "controls appear only after hover" repaint/hit-test behaviour on MSW.
+        if (workspace_modes) {
+                StartupLog("Create workspace splitter");
+                TopSplitter = new wxSplitterWindow(Panel, -1, wxDefaultPosition, wxDefaultSize,
+                        wxSP_3D | wxSP_LIVE_UPDATE);
+                TopSplitter->SetMinimumPaneSize(100);
 
-        StartupLog("Create subtitle editing box");
-        auto EditBox = new SubsEditBox(Panel, context.get());
+                videoBox = new VideoBox(TopSplitter, false, context.get());
+
+                tools_panel = new wxPanel(TopSplitter, -1, wxDefaultPosition, wxDefaultSize,
+                        wxTAB_TRAVERSAL | wxCLIP_CHILDREN);
+                context->audioBox = audioBox = new AudioBox(tools_panel, context.get());
+                auto EditBox = new SubsEditBox(tools_panel, context.get());
+
+                ToolsSizer = new wxBoxSizer(wxVERTICAL);
+                ToolsSizer->Add(audioBox, 0, wxEXPAND);
+                ToolsSizer->Add(EditBox, 1, wxEXPAND);
+                tools_panel->SetSizer(ToolsSizer);
+
+                int saved_pos = OPT_GET("Sanae/Workspace/SplitterPosition")->GetInt();
+                if (saved_pos < 100) saved_pos = 100;
+                TopSplitter->SplitVertically(videoBox, tools_panel, saved_pos);
+
+                TopSplitter->Bind(wxEVT_SPLITTER_SASH_POS_CHANGED, [this](wxSplitterEvent&) {
+                        if (!TopSplitter || !TopSplitter->IsSplit()) return;
+                        int pos = TopSplitter->GetSashPosition();
+                        int min_pos = TopSplitter->GetMinimumPaneSize();
+                        int width = TopSplitter->GetClientSize().GetWidth();
+                        int max_pos = width > min_pos ? width - min_pos : min_pos;
+                        if (pos < min_pos) pos = min_pos;
+                        if (pos > max_pos) pos = max_pos;
+                        OPT_SET("Sanae/Workspace/SplitterPosition")->SetInt(pos);
+                });
+        } else {
+                StartupLog("Create legacy video/tools layout");
+                TopSplitter = nullptr;
+                tools_panel = nullptr;
+
+                videoBox = new VideoBox(Panel, false, context.get());
+                context->audioBox = audioBox = new AudioBox(Panel, context.get());
+                auto EditBox = new SubsEditBox(Panel, context.get());
+
+                ToolsSizer = new wxBoxSizer(wxVERTICAL);
+                ToolsSizer->Add(audioBox, 0, wxEXPAND);
+                ToolsSizer->Add(EditBox, 1, wxEXPAND);
+
+                TopSizer = new wxBoxSizer(wxHORIZONTAL);
+                TopSizer->Add(videoBox, 0, wxEXPAND);
+                TopSizer->Add(ToolsSizer, 1, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 5);
+        }
 
         StartupLog("Create QCIssueDock");
         qc_dock = new QCIssueDock(Panel, context.get());
         qc_dock->Hide();
 
-        StartupLog("Arrange main sizers");
-        ToolsSizer = new wxBoxSizer(wxVERTICAL);
-        ToolsSizer->Add(audioBox, 0, wxEXPAND);
-        ToolsSizer->Add(EditBox, 1, wxEXPAND);
-
-        // Phase 4: wxSplitterWindow between video and tools.
-        // Replaces the fixed wxBoxSizer for TopSizer.
-        // Sash position persisted via Sanae/Workspace/SplitterPosition.
-        TopSplitter = new wxSplitterWindow(Panel, -1, wxDefaultPosition, wxDefaultSize,
-                wxSP_3D | wxSP_LIVE_UPDATE);
-        TopSplitter->SetMinimumPaneSize(100);
-        videoBox->Reparent(TopSplitter);
-        // Wrap ToolsSizer in a panel for the splitter.
-        auto tools_panel = new wxPanel(TopSplitter, -1, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL | wxCLIP_CHILDREN);
-        tools_panel->SetSizer(ToolsSizer);
-        ToolsSizer->SetContainingWindow(tools_panel);
-
-        // Restore sash position with clamping.
-        int saved_pos = OPT_GET("Sanae/Workspace/SplitterPosition")->GetInt();
-        // Split vertically (video left, tools right).
-        TopSplitter->SplitVertically(videoBox, tools_panel, saved_pos);
-
-        // Bind sash position change to persist.
-        TopSplitter->Bind(wxEVT_SPLITTER_SASH_POS_CHANGED, [this](wxSplitterEvent&) {
-                int pos = TopSplitter->GetSashPosition();
-                // Clamp to reasonable bounds.
-                int min_pos = TopSplitter->GetMinimumPaneSize();
-                int max_pos = TopSplitter->GetSize().GetWidth() - min_pos;
-                if (pos < min_pos) pos = min_pos;
-                if (pos > max_pos) pos = max_pos;
-                OPT_SET("Sanae/Workspace/SplitterPosition")->SetInt(pos);
-        });
-
         MainSizer = new wxBoxSizer(wxVERTICAL);
-        MainSizer->Add(new wxStaticLine(Panel),0,wxEXPAND,0);
-        MainSizer->Add(TopSplitter,0,wxEXPAND,0);
-        // QCIssueDock is shown below the grid in QC mode.
+        MainSizer->Add(new wxStaticLine(Panel), 0, wxEXPAND, 0);
+        if (TopSplitter)
+                MainSizer->Add(TopSplitter, 0, wxEXPAND, 0);
+        else
+                MainSizer->Add(TopSizer, 0, wxEXPAND, 0);
+
         MainSizer->Add(qc_dock, 0, wxEXPAND | wxALL, 0);
-        qc_dock->Hide();
-        MainSizer->Add(context->subsGrid,1,wxEXPAND,0);
+        MainSizer->Add(context->subsGrid, 1, wxEXPAND, 0);
         Panel->SetSizer(MainSizer);
 
         StartupLog("Perform layout");
+        Panel->Layout();
         Layout();
         StartupLog("Leaving InitContents");
 }
@@ -291,16 +320,32 @@ void FrameMain::SetDisplayMode(int video, int audio) {
 
         context->videoController->Stop();
 
-        // Phase 4: TopSplitter replaces TopSizer for video/tools split.
-        // Show/hide video pane via splitter.
+        // buildfix6: never query GetWindow2() after Unsplit(). wxSplitterWindow
+        // no longer owns a second pane at that point, so GetWindow2() is null and
+        // the video pane cannot be restored when a provider opens.
         if (TopSplitter) {
-                if (showVideo && !TopSplitter->IsSplit())
-                        TopSplitter->SplitVertically(videoBox, TopSplitter->GetWindow2(), OPT_GET("Sanae/Workspace/SplitterPosition")->GetInt());
-                else if (!showVideo && TopSplitter->IsSplit())
+                if (showVideo && !TopSplitter->IsSplit()) {
+                        int sash = OPT_GET("Sanae/Workspace/SplitterPosition")->GetInt();
+                        if (sash < TopSplitter->GetMinimumPaneSize())
+                                sash = TopSplitter->GetMinimumPaneSize();
+                        videoBox->Show();
+                        tools_panel->Show();
+                        if (!TopSplitter->SplitVertically(videoBox, tools_panel, sash))
+                                LOG_E("frame_main/video") << "Failed to restore video splitter pane";
+                }
+                else if (!showVideo && TopSplitter->IsSplit()) {
                         TopSplitter->Unsplit(videoBox);
+                        videoBox->Hide();
+                        tools_panel->Show();
+                }
         }
+        else if (TopSizer) {
+                TopSizer->Show(videoBox, showVideo, true);
+        }
+
         ToolsSizer->Show(audioBox, showAudio, true);
 
+        if (TopSplitter) TopSplitter->Layout();
         MainSizer->Layout();
         Layout();
 
@@ -421,7 +466,7 @@ void FrameMain::SetWorkspaceMode(sanae::WorkspaceMode mode) {
         // Legacy Aegisub layout remains. Commands still registered but no-ops.
         if (!OPT_GET("Sanae/WorkspaceModes")->GetBool()) return;
 
-        if (workspace_mode == mode && !focus_mode_active) return;
+        // Re-applying the current preset is intentional (startup/config reload).
 
         // Save current mode for Focus Mode restoration.
         if (focus_mode_active) {

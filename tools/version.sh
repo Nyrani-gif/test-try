@@ -54,12 +54,12 @@ else
 fi
 git_version_str=$(git describe --tags --exact-match 2> /dev/null)
 git_hash=$(git rev-parse --short HEAD)
-installer_version='3.5.3'
-resource_version='3, 5, 3'
-sanae_version_str='sanae-v0.3 (beta)'
-sanae_product_str='Sanae — Aegisub v0.3 (beta)'
-sanae_release_tag='sanae-beta-03'
-sanae_beta_number=3
+installer_version='3.5.4'
+resource_version='3, 5, 4'
+sanae_version_str='sanae-v0.4 (beta)'
+sanae_product_str='Sanae — Aegisub v0.4 (beta)'
+sanae_release_tag='sanae-beta-04'
+sanae_beta_number=4
 if test x$git_version_str != x; then
   case "$git_version_str" in
     sanae-beta-*)

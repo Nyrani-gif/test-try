@@ -36,11 +36,11 @@
 #include "git_version.h"
 
 #ifndef SANAE_VERSION_STRING
-#define SANAE_VERSION_STRING "sanae-v0.3 (beta)"
+#define SANAE_VERSION_STRING "sanae-v0.4 (beta)"
 #endif
 
 #ifndef SANAE_PRODUCT_STRING
-#define SANAE_PRODUCT_STRING "Sanae — Aegisub v0.3 (beta)"
+#define SANAE_PRODUCT_STRING "Sanae — Aegisub v0.4 (beta)"
 #endif
 
 #ifndef BUILD_GIT_HASH

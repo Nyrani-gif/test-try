@@ -41,6 +41,7 @@ class AegisubApp;
 class AsyncVideoProvider;
 class AudioBox;
 class VideoBox;
+class wxPanel;
 namespace agi { class AudioProvider; }
 namespace agi { struct Context; class OptionValue; }
 
@@ -80,6 +81,7 @@ class FrameMain : public wxFrame, private agi::signal::ConnectionScope {
         VideoBox *videoBox;      ///< The video area
         QCIssueDock *qc_dock;    ///< Phase 4: non-modal QC issues panel
         wxSplitterWindow *TopSplitter; ///< Phase 4: flexible video/tools split
+        wxPanel *tools_panel;           ///< Stable right pane used to restore the splitter
 
         wxSizer *MainSizer;  ///< Arranges things from top to bottom in the window
         wxSizer *TopSizer;   ///< Legacy: kept for compatibility (unused after splitter)
