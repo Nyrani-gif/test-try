@@ -32,6 +32,7 @@
 #include <array>
 #include <boost/container/map.hpp>
 #include <boost/flyweight/flyweight_fwd.hpp>
+#include <cstddef>
 #include <list>
 #include <vector>
 
@@ -210,4 +211,12 @@ public:
         /// @param parent Parent window
         SubsEditBox(wxWindow *parent, agi::Context *context);
         ~SubsEditBox();
+
+        // Sanae inline terminology command bridge. These keep command code out
+        // of the LineContextPanel internals and make Ctrl+T/Ctrl+I/Alt+1..5
+        // usable through Aegisub's normal command/hotkey system.
+        bool ApplyTerminologySuggestion(size_t index);
+        bool IgnoreTerminologySuggestion(size_t index = 0);
+        bool OpenTerminologyEntryPopover();
+        size_t TerminologySuggestionCount() const;
 };

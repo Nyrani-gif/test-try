@@ -41,6 +41,7 @@
 #include "compat.h"
 #include "dialog_style_editor.h"
 #include "flyweight_hash.h"
+#include "frame_main.h"
 #include "include/aegisub/context.h"
 #include "include/aegisub/hotkey.h"
 #include "initial_line_state.h"
@@ -48,13 +49,16 @@
 #include "options.h"
 #include "placeholder_ctrl.h"
 #include "project.h"
+#include "sanae_project.h"
 #include "selection_controller.h"
 #include "subs_edit_ctrl.h"
 #include "text_selection_controller.h"
 #include "timeedit_ctrl.h"
+#include "terminology_entry_popover.h"
 #include "translation_project.h"
 #include "utils.h"
 #include "validators.h"
+#include "workspace_mode.h"
 
 #include <libaegisub/character_count.h>
 #include <libaegisub/util.h>
@@ -455,8 +459,45 @@ void SubsEditBox::UpdateFrameTiming(agi::vfr::Framerate const& fps) {
 }
 
 void SubsEditBox::OnKeyDown(wxKeyEvent &event) {
-        if (!osx::ime::process_key_event(edit_ctrl, event))
-                hotkey::check("Subtitle Edit Box", c, event);
+        if (osx::ime::process_key_event(edit_ctrl, event))
+                return;
+
+        // Resolve the legacy Alt+1..4 color conflict by activating a separate
+        // context only in Translation/QC workspaces. Advanced mode retains the
+        // original Subtitle Edit Box bindings unchanged.
+        bool terminology_context =
+                OPT_GET("Sanae/InlineTerminology")->GetBool()
+                && OPT_GET("Sanae/WorkspaceModes")->GetBool()
+                && c->frame
+                && c->frame->GetWorkspaceMode() != sanae::WorkspaceMode::Advanced;
+
+        if (terminology_context && hotkey::check("Sanae Terminology", c, event))
+                return;
+
+        hotkey::check("Subtitle Edit Box", c, event);
+}
+
+bool SubsEditBox::ApplyTerminologySuggestion(size_t index) {
+        if (!line_context_panel || !line) return false;
+        return line_context_panel->ApplyTerminologySuggestion(index);
+}
+
+bool SubsEditBox::IgnoreTerminologySuggestion(size_t index) {
+        if (!line_context_panel || !line) return false;
+        return line_context_panel->IgnoreTerminologySuggestion(index);
+}
+
+bool SubsEditBox::OpenTerminologyEntryPopover() {
+        if (!line || !c || !c->sanaeProject || !c->sanaeProject->HasOpenEpisode())
+                return false;
+
+        auto *popover = new TerminologyEntryPopover(this, c, line, edit_ctrl);
+        popover->Popup();
+        return true;
+}
+
+size_t SubsEditBox::TerminologySuggestionCount() const {
+        return line_context_panel ? line_context_panel->TerminologySuggestionCount() : 0;
 }
 
 void SubsEditBox::OnChange(wxStyledTextEvent &event) {

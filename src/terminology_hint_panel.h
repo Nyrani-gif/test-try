@@ -2,7 +2,7 @@
 // Phase 2 of SANAE_REVAMP_PLAN.md §3.3
 //
 // Shows 3–5 relevant terms for the current EN source line.
-// Click-to-apply (no hotkeys yet — Alt+1..5 conflict unresolved, see HOTKEY_AUDIT.md).
+// Can be driven by mouse or by the Sanae Terminology hotkey context.
 //
 // Heavy/light split:
 //   OnActiveLineChanged → Search (Aho-Corasick, once per line)
@@ -14,6 +14,7 @@
 
 #include <wx/panel.h>
 
+#include <cstddef>
 #include <memory>
 #include <string>
 #include <vector>
@@ -34,6 +35,17 @@ public:
 
     // Light: update usage state. Called on text change.
     void OnTextChanged();
+
+    // Apply a cached suggestion (0-based). Returns false when the requested
+    // suggestion is not currently available.
+    bool ApplySuggestion(size_t index);
+
+    // Ignore a cached suggestion for the current episode (0-based). This is
+    // intentionally conservative: Ctrl+I should suppress the noisy match in
+    // the current episode without silently hiding a project-wide glossary term.
+    bool IgnoreSuggestion(size_t index);
+
+    size_t SuggestionCount() const;
 
 private:
     struct Impl;

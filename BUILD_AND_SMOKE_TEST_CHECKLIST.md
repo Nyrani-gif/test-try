@@ -171,9 +171,13 @@ Enable `Sanae/WorkspaceModes` = true for these tests.
 
 - [ ] Open Preferences → Hotkeys.
 - [ ] "Sanae QC" context appears in the tree.
+- [ ] "Sanae Terminology" context appears in the tree.
 - [ ] All Sanae commands visible (Default context: workspace, submit, F4).
 - [ ] Subtitle Edit Box context: Ctrl-T (add term), Ctrl-I (ignore term).
-- [ ] Terminology apply_1..5 appear in command dropdown (via "New" button).
+- [ ] Sanae Terminology context: Alt-1..5 apply suggestions 1..5.
+- [ ] In Translation/QC, Alt-1..5 apply terminology; in Advanced, Alt-1..4 retain legacy color commands.
+- [ ] Ctrl-T opens TerminologyEntryPopover prefilled from current EN/RU context.
+- [ ] Ctrl-I hides the top terminology match for the current episode and it stays hidden after line change/restart.
 - [ ] Rebind a Sanae command (e.g. change F4 to F5) → new binding works.
 - [ ] Remove a default binding (e.g. delete Ctrl+Enter) → command still accessible via menu.
 - [ ] Restart application → custom bindings persist.

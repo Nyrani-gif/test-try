@@ -47,6 +47,22 @@ namespace {
 		{nullptr}
 	};
 
+	// Sanae v0.4 buildfix5: inline terminology commands live in a dedicated
+	// runtime context so Translation/QC can use Alt-1..5 without stealing the
+	// legacy Subtitle Edit Box color shortcuts in Advanced mode. This migration
+	// is required for users who already have ?user/hotkey.json; changing only
+	// default_hotkey.json would affect fresh profiles but not existing ones.
+	const char *added_hotkeys_sanae_terminology[][3] = {
+		{"sanae/terminology/apply_1", "Sanae Terminology", "Alt-1"},
+		{"sanae/terminology/apply_2", "Sanae Terminology", "Alt-2"},
+		{"sanae/terminology/apply_3", "Sanae Terminology", "Alt-3"},
+		{"sanae/terminology/apply_4", "Sanae Terminology", "Alt-4"},
+		{"sanae/terminology/apply_5", "Sanae Terminology", "Alt-5"},
+		{"sanae/terminology/add", "Sanae Terminology", "Ctrl-T"},
+		{"sanae/terminology/ignore", "Sanae Terminology", "Ctrl-I"},
+		{nullptr}
+	};
+
 #ifdef __WXMAC__
 	const char *added_hotkeys_minimize[][3] = {
 		{"app/minimize", "Default", "Ctrl-M"},
@@ -96,6 +112,11 @@ void init() {
 	if (boost::find(migrations, "edit/line/duplicate/shift_back") == end(migrations)) {
 		migrate_hotkeys(added_hotkeys_shift_back);
 		migrations.emplace_back("edit/line/duplicate/shift_back");
+	}
+
+	if (boost::find(migrations, "sanae/terminology/v1") == end(migrations)) {
+		migrate_hotkeys(added_hotkeys_sanae_terminology);
+		migrations.emplace_back("sanae/terminology/v1");
 	}
 
 	if (boost::find(migrations, "duplicate -> split") == end(migrations)) {

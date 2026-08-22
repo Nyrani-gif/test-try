@@ -17,6 +17,8 @@
 
 #include <wx/panel.h>
 
+#include <cstddef>
+
 class AssDialogue;
 class SubsTextEditCtrl;
 namespace agi { class Context; }
@@ -33,6 +35,10 @@ public:
     // Called by SubsEditBox when the edit box text changes (RU keystroke).
     // Triggers light usage check on cached term matches.
     void OnTextChanged();
+
+    bool ApplyTerminologySuggestion(size_t index);
+    bool IgnoreTerminologySuggestion(size_t index);
+    size_t TerminologySuggestionCount() const;
 
 private:
     struct Impl;

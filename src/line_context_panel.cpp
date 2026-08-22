@@ -62,3 +62,20 @@ void LineContextPanel::OnTextChanged() {
     if (!OPT_GET("Sanae/InlineTerminology")->GetBool()) return;
     impl->term_panel->OnTextChanged();
 }
+
+bool LineContextPanel::ApplyTerminologySuggestion(size_t index) {
+    return impl->term_panel->ApplySuggestion(index);
+}
+
+bool LineContextPanel::IgnoreTerminologySuggestion(size_t index) {
+    auto const ignored = impl->term_panel->IgnoreSuggestion(index);
+    if (ignored && impl->term_panel->SuggestionCount() == 0) {
+        Hide();
+        GetParent()->Layout();
+    }
+    return ignored;
+}
+
+size_t LineContextPanel::TerminologySuggestionCount() const {
+    return impl->term_panel->SuggestionCount();
+}

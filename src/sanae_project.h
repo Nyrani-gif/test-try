@@ -397,6 +397,7 @@ public:
 	std::vector<SanaeTerminologyHistoryEntry> const& TerminologyHistory() const { return terminology_history; }
 	std::vector<SanaeTerminologyDraft> const& TerminologyDrafts() const { return terminology_drafts; }
 	std::vector<SanaeIgnoreDraft> const& IgnoreDrafts() const { return ignore_drafts; }
+	std::vector<SanaeIgnoredCandidate> const& IgnoredCandidates() const { return ignored_candidates; }
 	std::string const& LastFinalizeWarning() const { return last_finalize_warning; }
 
 	SanaeRepeatMatch const *RepeatFor(AssDialogue const *line) const;

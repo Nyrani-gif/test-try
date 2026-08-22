@@ -14,13 +14,35 @@
 #include "../frame_main.h"
 #include "../include/aegisub/context.h"
 #include "../options.h"
+#include "../subs_edit_box.h"
 #include "../sanae_ux_metrics.h"
 #include "../workspace_mode.h"
+
+#include <wx/window.h>
 
 
 namespace {
 using cmd::Command;
 using agi::Context;
+
+SubsEditBox *find_subs_edit_box(agi::Context *c) {
+    auto find_parent = [](wxWindow *window) -> SubsEditBox * {
+        for (auto *current = window; current; current = current->GetParent()) {
+            if (auto *edit = dynamic_cast<SubsEditBox *>(current))
+                return edit;
+        }
+        return nullptr;
+    };
+
+    if (auto *edit = find_parent(wxWindow::FindFocus())) return edit;
+    if (c && c->previousFocus) return find_parent(c->previousFocus);
+    return nullptr;
+}
+
+bool apply_term(agi::Context *c, size_t index) {
+    auto *edit = find_subs_edit_box(c);
+    return edit && edit->ApplyTerminologySuggestion(index);
+}
 
 // === Workspace mode commands ===
 
@@ -159,8 +181,10 @@ struct sanae_terminology_add final : public Command {
     STR_DISP("Add to Terminology")
     STR_HELP("Open the terminology entry popover for the current line")
     void operator()(agi::Context *c) override {
-        sanae::ux::terminology_manual_search();
-        LOG_D("sanae/terminology") << "add term";
+        if (auto *edit = find_subs_edit_box(c); edit && edit->OpenTerminologyEntryPopover()) {
+            sanae::ux::terminology_manual_search();
+            LOG_D("sanae/terminology") << "add term popover opened";
+        }
     }
 };
 
@@ -168,9 +192,10 @@ struct sanae_terminology_ignore final : public Command {
     CMD_NAME("sanae/terminology/ignore")
     STR_MENU("Ignore Term Match")
     STR_DISP("Ignore Term Match")
-    STR_HELP("Ignore the current terminology suggestion for this episode/project")
+    STR_HELP("Ignore the top terminology suggestion for the current episode")
     void operator()(agi::Context *c) override {
-        LOG_D("sanae/terminology") << "ignore term";
+        if (auto *edit = find_subs_edit_box(c); edit && edit->IgnoreTerminologySuggestion(0))
+            LOG_D("sanae/terminology") << "ignored top terminology match for episode";
     }
 };
 
@@ -180,8 +205,8 @@ struct sanae_terminology_apply_1 final : public Command {
     STR_DISP("Apply Term 1")
     STR_HELP("Apply the first terminology suggestion to the edit box")
     void operator()(agi::Context *c) override {
-        sanae::ux::terminology_inline_applied();
-        LOG_D("sanae/terminology") << "apply term 1";
+        if (apply_term(c, 0))
+            LOG_D("sanae/terminology") << "apply term 1";
     }
 };
 
@@ -191,7 +216,7 @@ struct sanae_terminology_apply_2 final : public Command {
     STR_DISP("Apply Term 2")
     STR_HELP("Apply the second terminology suggestion to the edit box")
     void operator()(agi::Context *c) override {
-        sanae::ux::terminology_inline_applied();
+        apply_term(c, 1);
     }
 };
 
@@ -201,7 +226,7 @@ struct sanae_terminology_apply_3 final : public Command {
     STR_DISP("Apply Term 3")
     STR_HELP("Apply the third terminology suggestion to the edit box")
     void operator()(agi::Context *c) override {
-        sanae::ux::terminology_inline_applied();
+        apply_term(c, 2);
     }
 };
 
@@ -211,7 +236,7 @@ struct sanae_terminology_apply_4 final : public Command {
     STR_DISP("Apply Term 4")
     STR_HELP("Apply the fourth terminology suggestion to the edit box")
     void operator()(agi::Context *c) override {
-        sanae::ux::terminology_inline_applied();
+        apply_term(c, 3);
     }
 };
 
@@ -221,7 +246,7 @@ struct sanae_terminology_apply_5 final : public Command {
     STR_DISP("Apply Term 5")
     STR_HELP("Apply the fifth terminology suggestion to the edit box")
     void operator()(agi::Context *c) override {
-        sanae::ux::terminology_inline_applied();
+        apply_term(c, 4);
     }
 };
 

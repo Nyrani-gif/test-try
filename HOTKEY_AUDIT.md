@@ -53,7 +53,7 @@
 
 ## Conflict analysis
 
-### 1. Alt+1..5 for terminology (Phase 2)
+### 1. Alt+1..5 for terminology (Phase 2) — RESOLVED in v0.4 buildfix5
 
 **Plan requirement (§4.8):** `Alt+1…Alt+5` in Subtitle Edit Box context for
 applying terminology matches 1-5.
@@ -80,17 +80,16 @@ a single context — a key has one binding per context.
 (d) **New context "Sanae Terminology" activated when LineContextPanel is focused.**
     Most precise, but requires changes to hotkey dispatch logic.
 
-**Recommendation:** This is a **UX CONFLICT** that must be surfaced to the user,
-not silently resolved. Per plan §4.8: "не выбирай новый shortcut молча".
+**Implemented resolution:** workspace-mode-conditional routing with a dedicated
+`Sanae Terminology` hotkey context. `SubsEditBox::OnKeyDown` dispatches this
+context before the legacy `Subtitle Edit Box` context only when:
 
-**Proposed for Phase 2:**
-- Default: `Alt+Shift+1..5` for terminology (option b), documented as deviation.
-- Future: implement option (d) — new "Sanae Terminology" context activated when
-  TerminologyHintPanel has focus. This gives `Alt+1..5` in that context without
-  conflict, matching the plan exactly. Requires hotkey dispatch extension.
+- `Sanae/InlineTerminology = true`;
+- `Sanae/WorkspaceModes = true`;
+- workspace is Translation or QC.
 
-**Status:** OPEN — requires user decision before Phase 2 implementation.
-Do NOT silently pick `Alt+Shift+1..5`.
+Thus `Alt+1..5` applies terminology in Translation/QC, while Advanced mode keeps
+the original `Alt+1..4` color bindings. No legacy typesetting shortcut is lost.
 
 ### 2. Ctrl+I for ignore term match (Phase 2)
 
@@ -141,11 +140,12 @@ line (no conflict — different active contexts).
 
 **Resolution:** OK — `Ctrl-Enter` in Always or Default context.
 
-## New contexts to add
+## New contexts
 
 | Context | When active | Keys |
 |---|---|---|
 | `Sanae QC` | WorkspaceMode==QC AND focus not in SubsEditBox | Q, C, Enter, Backspace, F4, Shift+F4, Ctrl+F4 |
+| `Sanae Terminology` | SubsEditBox + Translation/QC workspace + InlineTerminology | Alt+1..5, Ctrl+T, Ctrl+I |
 
 ## New bindings to add (no conflict)
 
@@ -161,13 +161,7 @@ line (no conflict — different active contexts).
 | `Ctrl-F4` | Sanae QC | sanae/qc/next_critical | 3 |
 | `Ctrl-Enter` | Always | sanae/episode/submit_for_qc | 4 |
 
-## Bindings REQUIRING user decision (OPEN)
+## Resolved conflicts
 
-| Key | Conflict | Options |
-|---|---|---|
-| `Alt-1..4` | Subtitle Edit Box color buttons vs terminology | (a) reassign colors, (b) Alt+Shift+1..5, (c) mode-conditional routing, (d) new focus context |
-
-**Status:** Do NOT implement terminology hotkeys until this conflict is resolved
-with the user. Phase 2 TerminologyHintPanel will show term suggestions without
-hotkey shortcuts initially; clicking applies them. Hotkeys added after conflict
-resolution.
+`Alt-1..4` is resolved by the dedicated `Sanae Terminology` context described
+above. Advanced mode continues to route those keys to the legacy color commands.

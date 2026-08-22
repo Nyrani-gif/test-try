@@ -342,6 +342,29 @@
                         "Home"
                 ]
         },
+        "Sanae Terminology" : {
+                "sanae/terminology/apply_1" : [
+                        "Alt-1"
+                ],
+                "sanae/terminology/apply_2" : [
+                        "Alt-2"
+                ],
+                "sanae/terminology/apply_3" : [
+                        "Alt-3"
+                ],
+                "sanae/terminology/apply_4" : [
+                        "Alt-4"
+                ],
+                "sanae/terminology/apply_5" : [
+                        "Alt-5"
+                ],
+                "sanae/terminology/add" : [
+                        "Ctrl-T"
+                ],
+                "sanae/terminology/ignore" : [
+                        "Ctrl-I"
+                ]
+        },
         "Sanae QC" : {
                 "sanae/qc/create_issue" : [
                         "Q"

@@ -24,6 +24,8 @@
 #include <wx/hyperlink.h>
 
 #include <algorithm>
+#include <cstddef>
+#include <exception>
 
 struct TerminologyHintPanel::Impl {
     TerminologyHintPanel *owner;  // the actual wxPanel
@@ -53,8 +55,8 @@ struct TerminologyHintPanel::Impl {
         header = new wxStaticText(owner, -1, "");
         main_sizer->Add(header, 0, wxBOTTOM, 4);
 
-        term_grid = new wxFlexGridSizer(2, 4, 4);
-        term_grid->AddGrowableCol(1, 1);
+        term_grid = new wxFlexGridSizer(3, 4, 4);
+        term_grid->AddGrowableCol(0, 1);
         main_sizer->Add(term_grid, 0, wxEXPAND);
 
         // Rebuild index when terminology changes.
@@ -130,6 +132,30 @@ struct TerminologyHintPanel::Impl {
         std::string normalized = SanaeNormalizeSource(en_source);
         cached_matches = index.Search(normalized);
 
+        // Suppress matches explicitly ignored by the user. We reuse the
+        // existing project/episode ignore persistence so Ctrl+I survives line
+        // changes, restarts and later snapshot merges.
+        auto const active_episode_id = manager.ActiveEpisodeId();
+        auto is_ignored = [&](sanae::TerminologyMatch const& match) {
+            for (auto const& item : manager.IgnoredCandidates()) {
+                if (item.deleted || (!item.language.empty() && item.language != "en")) continue;
+                if (item.scope != "project" && item.episode_id != active_episode_id) continue;
+                auto const ignored_normalized = item.normalized_text.empty()
+                    ? SanaeNormalizeSource(item.text)
+                    : item.normalized_text;
+                if (ignored_normalized == match.english_normalized) return true;
+            }
+
+            for (auto const& item : manager.IgnoreDrafts()) {
+                if (!item.language.empty() && item.language != "en") continue;
+                if (SanaeNormalizeSource(item.text) == match.english_normalized) return true;
+            }
+            return false;
+        };
+        cached_matches.erase(
+            std::remove_if(cached_matches.begin(), cached_matches.end(), is_ignored),
+            cached_matches.end());
+
         // Truncate to top 5.
         if (cached_matches.size() > 5)
             cached_matches.resize(5);
@@ -147,14 +173,15 @@ struct TerminologyHintPanel::Impl {
         UpdateUI();
     }
 
-    void ApplyTerm(size_t index) {
-        if (index >= cached_matches.size()) return;
+    bool ApplyTerm(size_t index) {
+        if (index >= cached_matches.size()) return false;
         auto const& match = cached_matches[index];
-        sanae::ux::terminology_inline_applied();
 
         // Insert the Russian translation at cursor position in edit_ctrl.
         // If there is a selection, replace it. Otherwise insert at cursor.
-        if (!edit_ctrl || !active_line) return;
+        if (!edit_ctrl || !active_line) return false;
+
+        sanae::ux::terminology_inline_applied();
 
         int sel_start = edit_ctrl->GetSelectionStart();
         int sel_end = edit_ctrl->GetSelectionEnd();
@@ -178,6 +205,26 @@ struct TerminologyHintPanel::Impl {
         // which triggers the LIGHT usage check only (UpdateUsage). The HEAVY
         // search (Aho-Corasick) is NOT rerun — it only fires on
         // OnActiveLineChanged, not on text change.
+        return true;
+    }
+
+    bool IgnoreTerm(size_t index) {
+        if (index >= cached_matches.size()) return false;
+
+        auto const english = cached_matches[index].english;
+        try {
+            // Ctrl+I is deliberately conservative: hide the match for the
+            // current episode. Project-wide suppression is still available in
+            // the full terminology/final-review workflow.
+            manager.QueueIgnore({"episode", english, "en"});
+        }
+        catch (std::exception const&) {
+            return false;
+        }
+
+        cached_matches.erase(cached_matches.begin() + static_cast<std::ptrdiff_t>(index));
+        UpdateUI();
+        return true;
     }
 
     void UpdateUI() {
@@ -217,12 +264,25 @@ struct TerminologyHintPanel::Impl {
             auto *term_label = new wxStaticText(owner, -1, label);
             term_grid->Add(term_label, 1, wxALIGN_CENTER_VERTICAL);
 
-            // Right: apply button (click-to-apply, no hotkey)
+            // Apply button. Rows 1..5 map to Alt+1..5 in the Sanae
+            // Terminology hotkey context.
             auto *apply_btn = new wxButton(owner, -1, _("Apply"));
+            apply_btn->SetToolTip(agi::wxformat(
+                _("Apply terminology suggestion %d (Alt+%d)"),
+                static_cast<int>(i + 1), static_cast<int>(i + 1)));
             apply_btn->Bind(wxEVT_BUTTON, [this, i](wxCommandEvent&) {
                 ApplyTerm(i);
             });
             term_grid->Add(apply_btn, 0, wxALIGN_CENTER_VERTICAL);
+
+            auto *ignore_btn = new wxButton(owner, -1, _("Ignore"));
+            ignore_btn->SetToolTip(i == 0
+                ? _("Hide this match for the current episode (Ctrl+I)")
+                : _("Hide this match for the current episode"));
+            ignore_btn->Bind(wxEVT_BUTTON, [this, i](wxCommandEvent&) {
+                IgnoreTerm(i);
+            });
+            term_grid->Add(ignore_btn, 0, wxALIGN_CENTER_VERTICAL);
         }
 
         owner->Show();
@@ -254,4 +314,18 @@ void TerminologyHintPanel::OnTextChanged() {
     if (!OPT_GET("Sanae/InlineTerminology")->GetBool()) return;
     if (!IsShown()) return;
     impl->DoUsageCheck();
+}
+
+bool TerminologyHintPanel::ApplySuggestion(size_t index) {
+    if (!OPT_GET("Sanae/InlineTerminology")->GetBool()) return false;
+    return impl->ApplyTerm(index);
+}
+
+bool TerminologyHintPanel::IgnoreSuggestion(size_t index) {
+    if (!OPT_GET("Sanae/InlineTerminology")->GetBool()) return false;
+    return impl->IgnoreTerm(index);
+}
+
+size_t TerminologyHintPanel::SuggestionCount() const {
+    return impl->cached_matches.size();
 }
